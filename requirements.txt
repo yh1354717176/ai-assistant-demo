@@ -18,9 +18,11 @@ langchain-qdrant
 
 # 搜索工具
 duckduckgo_search
+ddgs
 
 # Gmail 工具
 langchain-google-community
 
 # 环境变量管理
 python-dotenv
+
