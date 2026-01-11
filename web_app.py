@@ -1,5 +1,4 @@
 import os
-import json
 import base64
 from dotenv import load_dotenv
 
@@ -23,9 +22,18 @@ from langchain_community.tools import DuckDuckGoSearchRun
 # 新增这一行
 from langchain_community.agent_toolkits import GmailToolkit
 
-# 如果检测到 Streamlit Secrets (说明在云端)，则从 Secrets 恢复密钥文件
+# ==========================================
+# 0. 云端部署补丁 (Streamlit Cloud)
+# ==========================================
+# 如果检测到 Streamlit Secrets (说明在云端), 则从 Secrets 恢复密钥文件
 if "GOOGLE_API_KEY" in st.secrets:
     os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
+
+# 恢复 Qdrant 配置
+if "QDRANT_URL" in st.secrets:
+    os.environ["QDRANT_URL"] = st.secrets["QDRANT_URL"]
+if "QDRANT_API_KEY" in st.secrets:
+    os.environ["QDRANT_API_KEY"] = st.secrets["QDRANT_API_KEY"]
 
 # 恢复 credentials.json
 if "credentials_json" in st.secrets:
@@ -36,9 +44,8 @@ if "credentials_json" in st.secrets:
 if "token_json" in st.secrets:
     with open("token.json", "w") as f:
         f.write(st.secrets["token_json"])
-# ==========================================
+
 # ☁️ 云端部署补丁 (End)
-# ==========================================
 
 # ==========================================
 # 1. 页面配置 & 标题
@@ -60,7 +67,17 @@ def get_graph(_version="v5.0"):  # 修改版本号强制刷新缓存
     llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview")  # 使用更强的模型
     embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
 
-    client = QdrantClient(url="http://localhost:6333")
+    # Qdrant 连接配置 (支持本地和云端)
+    qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+    qdrant_api_key = os.getenv("QDRANT_API_KEY", None)
+    
+    if qdrant_api_key:
+        # 使用 Qdrant Cloud
+        client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+    else:
+        # 使用本地 Qdrant
+        client = QdrantClient(url=qdrant_url)
+    
     vectorstore = QdrantVectorStore(
         client=client,
         collection_name="knowledge_base",
@@ -341,5 +358,4 @@ with st.sidebar:
                         st.markdown("**📤 返回结果:**")
                         st.code(tool["result"], language=None)
                     
-
                     st.divider()
