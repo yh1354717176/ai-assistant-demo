@@ -1,4 +1,5 @@
 import os
+import json
 import base64
 from dotenv import load_dotenv
 
@@ -21,6 +22,23 @@ from typing import Annotated, TypedDict
 from langchain_community.tools import DuckDuckGoSearchRun
 # 新增这一行
 from langchain_community.agent_toolkits import GmailToolkit
+
+# 如果检测到 Streamlit Secrets (说明在云端)，则从 Secrets 恢复密钥文件
+if "GOOGLE_API_KEY" in st.secrets:
+    os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
+
+# 恢复 credentials.json
+if "credentials_json" in st.secrets:
+    with open("credentials.json", "w") as f:
+        f.write(st.secrets["credentials_json"])
+
+# 恢复 token.json
+if "token_json" in st.secrets:
+    with open("token.json", "w") as f:
+        f.write(st.secrets["token_json"])
+# ==========================================
+# ☁️ 云端部署补丁 (End)
+# ==========================================
 
 # ==========================================
 # 1. 页面配置 & 标题
@@ -323,4 +341,5 @@ with st.sidebar:
                         st.markdown("**📤 返回结果:**")
                         st.code(tool["result"], language=None)
                     
+
                     st.divider()
