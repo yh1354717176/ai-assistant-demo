@@ -22,7 +22,9 @@ ddgs
 
 # Gmail 工具
 langchain-google-community
+google-auth-oauthlib
 
 # 环境变量管理
 python-dotenv
+
 
