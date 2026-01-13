@@ -100,11 +100,10 @@ def get_graph(_version="v5.0"):  # 修改版本号强制刷新缓存
     gmail_toolkit = GmailToolkit()
     
     # 初始化 Calendar 工具箱
-    # 使用显式凭证加载，确保正确读取 token.json
-    from langchain_google_community.calendar.utils import get_google_credentials
-    calendar_creds = get_google_credentials(
-        token_file="token.json",
-        client_secrets_file="credentials.json",
+    # 直接从 token.json 加载已认证的凭证，避免在云端触发 OAuth 流程
+    from google.oauth2.credentials import Credentials
+    calendar_creds = Credentials.from_authorized_user_file(
+        "token.json",
         scopes=["https://www.googleapis.com/auth/calendar"]
     )
     calendar_toolkit = CalendarToolkit(credentials=calendar_creds)
