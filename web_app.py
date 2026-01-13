@@ -22,18 +22,11 @@ from langchain_community.tools import DuckDuckGoSearchRun
 # 新增这一行
 from langchain_community.agent_toolkits import GmailToolkit
 
-# ==========================================
-# 0. 云端部署补丁 (Streamlit Cloud)
-# ==========================================
-# 如果检测到 Streamlit Secrets (说明在云端), 则从 Secrets 恢复密钥文件
-if "GOOGLE_API_KEY" in st.secrets:
-    os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
-
-# 恢复 Qdrant 配置
-if "QDRANT_URL" in st.secrets:
-    os.environ["QDRANT_URL"] = st.secrets["QDRANT_URL"]
-if "QDRANT_API_KEY" in st.secrets:
-    os.environ["QDRANT_API_KEY"] = st.secrets["QDRANT_API_KEY"]
+# 1. 恢复环境变量 (API Key & Tracing)
+# 只要 Secrets 里有的配置，都自动加载到系统环境变量中
+# 这样不仅支持 Google Key，也支持 LangSmith 的配置
+for key in st.secrets:
+    os.environ[key] = st.secrets[key]
 
 # 恢复 credentials.json
 if "credentials_json" in st.secrets:
@@ -359,3 +352,4 @@ with st.sidebar:
                         st.code(tool["result"], language=None)
                     
                     st.divider()
+
