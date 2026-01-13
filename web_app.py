@@ -32,14 +32,20 @@ for key in st.secrets:
     if key not in json_secrets:
         os.environ[key] = st.secrets[key]
 
+import json  # 提前导入 json 模块
+
 # 恢复 credentials.json
 if "credentials_json" in st.secrets:
-    with open("credentials.json", "w") as f:
-        f.write(st.secrets["credentials_json"].strip())  # 去除前后空白和换行符
+    cred_content = st.secrets["credentials_json"].strip()  # 去除前后空白和换行符
+    try:
+        json.loads(cred_content)  # 验证是否为有效 JSON
+        with open("credentials.json", "w") as f:
+            f.write(cred_content)
+    except json.JSONDecodeError as e:
+        st.error(f"❌ credentials_json 格式错误: {e}")
 
 # 恢复 token.json
 if "token_json" in st.secrets:
-    import json
     token_content = st.secrets["token_json"].strip()  # 去除前后空白和换行符
     # 验证 JSON 格式是否正确
     try:
