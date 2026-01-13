@@ -98,7 +98,16 @@ def get_graph(_version="v5.0"):  # 修改版本号强制刷新缓存
     # 初始化 Gmail 工具箱
     # 它会自动读取文件夹里的 token.json
     gmail_toolkit = GmailToolkit()
-    calendar_toolkit = CalendarToolkit()
+    
+    # 初始化 Calendar 工具箱
+    # 使用显式凭证加载，确保正确读取 token.json
+    from langchain_google_community.calendar.utils import get_google_credentials
+    calendar_creds = get_google_credentials(
+        token_file="token.json",
+        client_secrets_file="credentials.json",
+        scopes=["https://www.googleapis.com/auth/calendar"]
+    )
+    calendar_toolkit = CalendarToolkit(credentials=calendar_creds)
 
     tools = [retriever_tool, calculate_bonus, search_tool] + gmail_toolkit.get_tools() + calendar_toolkit.get_tools()
     llm_with_tools = llm.bind_tools(tools)
