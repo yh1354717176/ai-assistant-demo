@@ -63,7 +63,7 @@ st.caption("我是由 LangGraph 驱动的智能体，能查文档，也能算工
 # 2. 缓存资源 (避免每次刷新都重连数据库)
 # ==========================================
 @st.cache_resource
-def get_graph(_version="v5.0"):  # 修改版本号强制刷新缓存
+def get_graph(_version="v5.1"):  # 修改版本号强制刷新缓存
     """初始化图结构，只执行一次"""
     print(f"🔄 正在初始化 LangGraph... (Cache Version: {_version})")
 
@@ -128,10 +128,19 @@ def get_graph(_version="v5.0"):  # 修改版本号强制刷新缓存
     # 系统提示词：指导 AI 的行为
     from langchain_core.messages import SystemMessage
     SYSTEM_PROMPT = """你是"幻影科技"公司的智能员工助手。
+
 请遵守以下规则：
 1. 当你使用工具获取信息后，必须用简洁的自然语言回答用户的问题。
 2. 不要直接复述工具返回的原始内容，而是提炼关键信息。
-3. 回答要友好、简洁、直接。"""
+3. 回答要友好、简洁、直接。
+
+关于日历工具的使用：
+- 当用户询问"日程"、"安排"、"会议"时，使用 get_events 工具查询日历事件
+- 查询特定日期的日程时，需要提供 time_min 和 time_max 参数（ISO 8601 格式）
+- 例如查询明天的日程，time_min 应该是明天 00:00:00，time_max 应该是明天 23:59:59
+- 将查询结果用友好的中文格式呈现，如"您明天有以下安排：..."
+- 如果没有日程，回复"您明天没有安排任何日程"
+"""
 
     def chatbot(state: State):
         messages = state["messages"]
