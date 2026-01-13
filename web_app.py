@@ -114,19 +114,23 @@ def get_graph(_version="v5.1"):  # 修改版本号强制刷新缓存
     # 初始化搜索工具
     search_tool = DuckDuckGoSearchRun()
 
-    # 初始化 Gmail 工具箱
-    # 它会自动读取文件夹里的 token.json
-    gmail_toolkit = GmailToolkit()
-    
     # 初始化 Calendar 工具箱
-    # 直接从 token.json 加载已认证的凭证，避免在云端触发 OAuth 流程
+    # 直接从 token.json 加载已认证的凭证
     from google.oauth2.credentials import Credentials
     calendar_creds = Credentials.from_authorized_user_file(
         "token.json"
     )
+    # Debug: Show scopes in sidebar to verify we have calendar permissions
+    with st.sidebar:
+        st.caption(f"🔧 Debug: Loaded Scopes: {calendar_creds.scopes}")
+
     calendar_toolkit = CalendarToolkit(credentials=calendar_creds)
 
-    tools = [retriever_tool, calculate_bonus, search_tool] + gmail_toolkit.get_tools() + calendar_toolkit.get_tools()
+    # 初始化 Gmail 工具箱
+    # 它会自动读取文件夹里的 token.json
+    gmail_toolkit = GmailToolkit()
+
+    tools = [retriever_tool, calculate_bonus, search_tool] + calendar_toolkit.get_tools() + gmail_toolkit.get_tools()
     llm_with_tools = llm.bind_tools(tools)
 
     # --- 构建图 ---
