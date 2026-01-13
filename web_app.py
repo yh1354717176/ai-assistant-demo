@@ -21,6 +21,7 @@ from typing import Annotated, TypedDict
 from langchain_community.tools import DuckDuckGoSearchRun
 # 新增这一行
 from langchain_community.agent_toolkits import GmailToolkit
+from langchain_google_community import CalendarToolkit
 
 # 1. 恢复环境变量 (API Key & Tracing)
 # 只要 Secrets 里有的配置，都自动加载到系统环境变量中
@@ -97,8 +98,9 @@ def get_graph(_version="v5.0"):  # 修改版本号强制刷新缓存
     # 初始化 Gmail 工具箱
     # 它会自动读取文件夹里的 token.json
     gmail_toolkit = GmailToolkit()
+    calendar_toolkit = GoogleCalendarToolkit()
 
-    tools = [retriever_tool, calculate_bonus, search_tool] + gmail_toolkit.get_tools()
+    tools = [retriever_tool, calculate_bonus, search_tool] + gmail_toolkit.get_tools() + calendar_toolkit.get_tools()
     llm_with_tools = llm.bind_tools(tools)
 
     # --- 构建图 ---
@@ -352,4 +354,5 @@ with st.sidebar:
                         st.code(tool["result"], language=None)
                     
                     st.divider()
+
 
