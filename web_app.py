@@ -21,10 +21,10 @@ from typing import Annotated, TypedDict
 from langchain_community.tools import DuckDuckGoSearchRun
 # 新增这一行
 from langchain_community.agent_toolkits import GmailToolkit
-# Remove CalendarToolkit import as we will implement custom tool
-# from langchain_google_community import CalendarToolkit 
-from googleapiclient.discovery import build
-import datetime
+from langchain_google_community import CalendarToolkit 
+# from googleapiclient.discovery import build # Removed as we use Toolkit
+# import datetime # Removed as we use Toolkit (standard lib datetime might be needed by other parts, but let's check. lines 307 usages import it locally or use global? Global usage was added by me. I'll remove it. If other code needs it, I'll keep it. Wait, line 307 imports it inside tool_calls logic? No, line 307 is "import datetime". So global import is safe to remove if that was the only global one.)
+
 
 # 1. 恢复环境变量 (API Key & Tracing)
 # 只要 Secrets 里有的配置，都自动加载到系统环境变量中
@@ -125,47 +125,9 @@ def get_graph(_version="v5.1"):  # 修改版本号强制刷新缓存
         "token.json",
         scopes=["https://www.googleapis.com/auth/calendar"]
     )
-    # calendar_toolkit = CalendarToolkit(credentials=calendar_creds) # 替换为自定义工具
+    calendar_toolkit = CalendarToolkit(credentials=calendar_creds)
 
-    @tool
-    def search_events(query: str = "") -> str:
-        """查询日历事件/日程/安排。
-        
-        Args:
-            query: 查询关键词。如果不填则 listing 即将发生的日程(默认10条)。
-        """
-        try:
-            service = build('calendar', 'v3', credentials=calendar_creds)
-            
-            # 使用 UTC 时间
-            now = datetime.datetime.utcnow().isoformat() + 'Z'
-            
-            # 调用 Google Calendar API
-            events_result = service.events().list(
-                calendarId='primary', 
-                timeMin=now,
-                maxResults=10, 
-                singleEvents=True,
-                orderBy='startTime',
-                q=query # 支持关键词过滤
-            ).execute()
-            
-            events = events_result.get('items', [])
-            if not events:
-                return "📅在此期间没有找到相关日程。"
-            
-            result_strs = []
-            for event in events:
-                start = event['start'].get('dateTime', event['start'].get('date'))
-                summary = event.get('summary', '无标题')
-                result_strs.append(f"- {start}: {summary}")
-            
-            return "📅 找到以下日程：\n" + "\n".join(result_strs)
-            
-        except Exception as e:
-            return f"❌ 查询日程时发生错误: {e}"
-
-    tools = [retriever_tool, calculate_bonus, search_tool, search_events] + gmail_toolkit.get_tools()
+    tools = [retriever_tool, calculate_bonus, search_tool] + gmail_toolkit.get_tools() + calendar_toolkit.get_tools()
     llm_with_tools = llm.bind_tools(tools)
 
     # --- 构建图 ---
@@ -183,8 +145,9 @@ def get_graph(_version="v5.1"):  # 修改版本号强制刷新缓存
 
 关于日历工具的使用：
 - 当用户询问"日程"、"安排"、"会议"时，使用 search_events 工具查询日历事件
-- search_events 工具可以通过 query 参数搜索事件
-- 可以用 get_current_datetime 先获取当前时间，再进行日程查询
+- search_events 工具可以通过 query 参数搜索事件，可以通过 min_datetime 和 max_datetime 过滤时间范围
+- 对于"明天"、"下周"等时间相关的查询，请务必自行计算好 'YYYY-MM-DD HH:MM:SS' 格式的 min_datetime 和 max_datetime 传给工具
+- 可以用 get_current_datetime 先获取当前时间，再进行计算
 - 将查询结果用友好的中文格式呈现，如"您有以下安排：..."
 - 如果没有日程，回复"您没有找到相关日程"
 """
