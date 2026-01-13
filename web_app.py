@@ -98,7 +98,7 @@ def get_graph(_version="v5.0"):  # 修改版本号强制刷新缓存
     # 初始化 Gmail 工具箱
     # 它会自动读取文件夹里的 token.json
     gmail_toolkit = GmailToolkit()
-    calendar_toolkit = GoogleCalendarToolkit()
+    calendar_toolkit = CalendarToolkit()
 
     tools = [retriever_tool, calculate_bonus, search_tool] + gmail_toolkit.get_tools() + calendar_toolkit.get_tools()
     llm_with_tools = llm.bind_tools(tools)
@@ -354,5 +354,6 @@ with st.sidebar:
                         st.code(tool["result"], language=None)
                     
                     st.divider()
+
 
 
