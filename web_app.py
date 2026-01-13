@@ -26,18 +26,28 @@ from langchain_google_community import CalendarToolkit
 # 1. 恢复环境变量 (API Key & Tracing)
 # 只要 Secrets 里有的配置，都自动加载到系统环境变量中
 # 这样不仅支持 Google Key，也支持 LangSmith 的配置
+# 注意：排除 JSON 格式的 secrets
+json_secrets = ["credentials_json", "token_json"]
 for key in st.secrets:
-    os.environ[key] = st.secrets[key]
+    if key not in json_secrets:
+        os.environ[key] = st.secrets[key]
 
 # 恢复 credentials.json
 if "credentials_json" in st.secrets:
     with open("credentials.json", "w") as f:
-        f.write(st.secrets["credentials_json"])
+        f.write(st.secrets["credentials_json"].strip())  # 去除前后空白和换行符
 
 # 恢复 token.json
 if "token_json" in st.secrets:
-    with open("token.json", "w") as f:
-        f.write(st.secrets["token_json"])
+    import json
+    token_content = st.secrets["token_json"].strip()  # 去除前后空白和换行符
+    # 验证 JSON 格式是否正确
+    try:
+        json.loads(token_content)  # 验证是否为有效 JSON
+        with open("token.json", "w") as f:
+            f.write(token_content)
+    except json.JSONDecodeError as e:
+        st.error(f"❌ token_json 格式错误: {e}")
 
 # ☁️ 云端部署补丁 (End)
 
