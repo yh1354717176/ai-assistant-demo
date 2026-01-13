@@ -21,7 +21,10 @@ from typing import Annotated, TypedDict
 from langchain_community.tools import DuckDuckGoSearchRun
 # 新增这一行
 from langchain_community.agent_toolkits import GmailToolkit
-from langchain_google_community import CalendarToolkit
+# Remove CalendarToolkit import as we will implement custom tool
+# from langchain_google_community import CalendarToolkit 
+from googleapiclient.discovery import build
+import datetime
 
 # 1. 恢复环境变量 (API Key & Tracing)
 # 只要 Secrets 里有的配置，都自动加载到系统环境变量中
@@ -122,9 +125,47 @@ def get_graph(_version="v5.1"):  # 修改版本号强制刷新缓存
         "token.json",
         scopes=["https://www.googleapis.com/auth/calendar"]
     )
-    calendar_toolkit = CalendarToolkit(credentials=calendar_creds)
+    # calendar_toolkit = CalendarToolkit(credentials=calendar_creds) # 替换为自定义工具
 
-    tools = [retriever_tool, calculate_bonus, search_tool] + gmail_toolkit.get_tools() + calendar_toolkit.get_tools()
+    @tool
+    def search_events(query: str = "") -> str:
+        """查询日历事件/日程/安排。
+        
+        Args:
+            query: 查询关键词。如果不填则 listing 即将发生的日程(默认10条)。
+        """
+        try:
+            service = build('calendar', 'v3', credentials=calendar_creds)
+            
+            # 使用 UTC 时间
+            now = datetime.datetime.utcnow().isoformat() + 'Z'
+            
+            # 调用 Google Calendar API
+            events_result = service.events().list(
+                calendarId='primary', 
+                timeMin=now,
+                maxResults=10, 
+                singleEvents=True,
+                orderBy='startTime',
+                q=query # 支持关键词过滤
+            ).execute()
+            
+            events = events_result.get('items', [])
+            if not events:
+                return "📅在此期间没有找到相关日程。"
+            
+            result_strs = []
+            for event in events:
+                start = event['start'].get('dateTime', event['start'].get('date'))
+                summary = event.get('summary', '无标题')
+                result_strs.append(f"- {start}: {summary}")
+            
+            return "📅 找到以下日程：\n" + "\n".join(result_strs)
+            
+        except Exception as e:
+            return f"❌ 查询日程时发生错误: {e}"
+
+    tools = [retriever_tool, calculate_bonus, search_tool, search_events] + gmail_toolkit.get_tools()
     llm_with_tools = llm.bind_tools(tools)
 
     # --- 构建图 ---
