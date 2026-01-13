@@ -145,9 +145,11 @@ def get_graph(_version="v5.1"):  # 修改版本号强制刷新缓存
 1. 当你使用工具获取信息后，必须用简洁的自然语言回答用户的问题。
 2. 不要直接复述工具返回的原始内容，而是提炼关键信息。
 3. 回答要友好、简洁、直接。
+4. **格式警告**: 当工具参数需要 JSON 字符串时（如 calendars_info），**必须**确保内部使用双引号 `"` 包裹键和值（例如 `[{"key": "value"}]`），严禁使用单引号 `'`，否则会导致系统崩溃。
 
 关于日历工具的使用：
-- 当用户询问"日程"、"安排"、"会议"时，使用 search_events 工具查询日历事件
+- **步骤**: 查询日程前，**必须先调用** `get_calendars_info` 获取日历列表。
+- 然后调用 `search_events`，将 `get_calendars_info` 的完整返回值（保持原样，确保双引号）作为 `calendars_info` 参数传入。
 - search_events 工具可以通过 query 参数搜索事件，可以通过 min_datetime 和 max_datetime 过滤时间范围
 - 对于"明天"、"下周"等时间相关的查询，请务必自行计算好 'YYYY-MM-DD HH:MM:SS' 格式的 min_datetime 和 max_datetime 传给工具
 - 可以用 get_current_datetime 先获取当前时间，再进行计算
