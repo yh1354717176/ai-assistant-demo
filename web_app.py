@@ -122,8 +122,7 @@ def get_graph(_version="v5.1"):  # 修改版本号强制刷新缓存
     # 直接从 token.json 加载已认证的凭证，避免在云端触发 OAuth 流程
     from google.oauth2.credentials import Credentials
     calendar_creds = Credentials.from_authorized_user_file(
-        "token.json",
-        scopes=["https://www.googleapis.com/auth/calendar"]
+        "token.json"
     )
     calendar_toolkit = CalendarToolkit(credentials=calendar_creds)
 
