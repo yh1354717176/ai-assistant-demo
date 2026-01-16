@@ -116,7 +116,7 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
         """当你需要根据用户的描述生成图片、绘画、或者设计草图时，使用这个工具。
         输入应该是对画面内容的详细英文或中文描述。调用 Nano Banana (Imagen 3) API。"""
         try:
-            # 延迟导入以避免在此之前未安装依赖时报错
+            # 延迟导入
             from google import genai
             from google.genai import types
             import base64
@@ -128,26 +128,52 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
 
             client = genai.Client(api_key=api_key)
             
-            # 使用 Imagen 3.0 生成高质量图像
-            try:
-                response = client.models.generate_images(
-                    model='gemini-2.5-flash-image',
-                    prompt=prompt,
-                    config=types.GenerateImagesConfig(
-                        number_of_images=1,
+            # 优先尝试的模型列表
+            # Note: 'gemini-2.5-flash-image' sometimes returns 404 if not enabled/available.
+            # 'imagen-3.0-generate-001' is the stable Imagen 3 model.
+            candidate_models = [
+                'imagen-3.0-generate-001',
+                'gemini-2.5-flash-image',
+            ]
+            
+            last_error = None
+            
+            for model_name in candidate_models:
+                try:
+                    # 使用 generate_images
+                    response = client.models.generate_images(
+                        model=model_name,
+                        prompt=prompt,
+                        config=types.GenerateImagesConfig(
+                            number_of_images=1,
+                        )
                     )
-                )
-            except Exception as inner_e:
-                # Fallback to gemini-2.0-flash-exp if imagen fails
-                 return f"❌ Imagen 调用失败: {inner_e}"
-
-            if response.generated_images:
-                img_data = response.generated_images[0].image.image_bytes
-                b64_data = base64.b64encode(img_data).decode('utf-8')
-                # 返回 Markdown 图片格式，UI 会自动渲染
-                return f"\n![Nano Banana 插图](data:image/png;base64,{b64_data})\n"
-            else:
-                return "❌ 生成图片失败，未返回图像数据。"
+                    
+                    if response.generated_images:
+                        img_data = response.generated_images[0].image.image_bytes
+                        b64_data = base64.b64encode(img_data).decode('utf-8')
+                        return f"\n![{model_name} 插图](data:image/png;base64,{b64_data})\n"
+                        
+                except Exception as e:
+                    last_error = e
+                    continue # Try next model
+            
+            # If we get here, all models failed.
+            # List available models to help debug.
+            try:
+                available_models = []
+                for m in client.models.list():
+                    # explicitly checking if 'generateImages' is supported would be better
+                    # but simple listing is enough for user to check IDs.
+                    if "generate" in m.name or "image" in m.name:
+                         available_models.append(m.name)
+                
+                # Take top 10 relevant
+                debug_list = ", ".join(available_models[:10])
+                error_msg = f"❌ 所有尝试的模型 ({candidate_models}) 都失败了。\n最后一次错误: {last_error}\n\n可用模型示例: {debug_list}"
+                return error_msg
+            except Exception as list_e:
+                return f"❌ 图片生成失败且无法获取模型列表。错误: {last_error}"
                 
         except Exception as e:
             return f"❌ 生成图片出错: {str(e)}"
