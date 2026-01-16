@@ -1,6 +1,7 @@
 import os
 import streamlit as st
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools.retriever import create_retriever_tool
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_community.agent_toolkits import GmailToolkit
