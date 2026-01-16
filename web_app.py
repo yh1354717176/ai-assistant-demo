@@ -211,9 +211,10 @@ def show_chat_interface():
                         # 删除功能
                         if st.button("🗑️ 删除", key=f"del_{tid_str}", type="primary"):
                             auth_service.delete_thread(tid_str, st.session_state["user_id"])
-                            # 如果删除的是当前对话，重置 ID
+                            # 如果删除的是当前对话，重置状态
                             if is_active:
                                 st.session_state["thread_id"] = None
+                                st.session_state["messages"] = []  # 清空消息
                                 st.query_params.clear()
                             st.rerun()
         else:
