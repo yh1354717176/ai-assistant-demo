@@ -126,15 +126,15 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
             if not api_key:
                 return "❌ 错误：未找到 GOOGLE_API_KEY，无法生成图片。"
 
-            client = genai.Client(api_key=api_key)
+            # 使用 v1alpha API 版本以支持最新的 experimental/preview 模型
+            client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
             
             # 优先尝试的模型列表
-            # 根据错误日志更新可用模型
             candidate_models = [
                 'imagen-4.0-generate-001',
-                'gemini-3-pro-image-preview',
-                'gemini-2.0-flash-exp-image-generation',
-                'imagen-3.0-generate-001', # Keep as fallback
+                'imagen-4.0-fast-generate-001', 
+                'gemini-2.5-flash-image',
+                'imagen-3.0-generate-001',
             ]
             
             last_error = None
