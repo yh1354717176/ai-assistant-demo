@@ -77,7 +77,7 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
     print(f"🔄 正在初始化 LangGraph... (Cache Version: {_version})")
 
     # --- 模型与数据库 ---
-    llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview")  # 使用更强的模型 // gemini-3-flash-preview
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")  # 使用更强的模型 // gemini-3-flash-preview
     embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
 
     # Qdrant 连接配置 (支持本地和云端)
@@ -133,7 +133,7 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
             try:
                 # 使用用户账户中可用的模型 ID
                 response = client.models.generate_content(
-                    model='gemini-2.0-flash-exp-image-generation',
+                    model='gemini-2.5-flash-image',
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         response_modalities=['Text', 'Image']  # 修正：需要同时包含 Text 和 Image
