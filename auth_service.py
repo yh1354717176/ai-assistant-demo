@@ -75,9 +75,11 @@ def save_image_to_db(thread_id, prompt, base64_data, mime_type="image/png"):
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO app_images (thread_id, prompt, base64_data, mime_type) VALUES (%s, %s, %s, %s)",
+                "INSERT INTO app_images (thread_id, prompt, base64_data, mime_type) VALUES (%s, %s, %s, %s) RETURNING id",
                 (thread_id, prompt, base64_data, mime_type)
             )
+            image_id = cur.fetchone()[0]
+            return image_id  # 返回新插入的图片 ID
 
 def get_images_for_thread(thread_id):
     """获取对话关联的所有图片"""
@@ -85,10 +87,24 @@ def get_images_for_thread(thread_id):
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT base64_data, prompt, mime_type FROM app_images WHERE thread_id = %s ORDER BY created_at ASC",
+                "SELECT id, base64_data, prompt, mime_type FROM app_images WHERE thread_id = %s ORDER BY created_at ASC",
                 (thread_id,)
             )
-            return [{"data": row[0], "prompt": row[1], "mime_type": row[2]} for row in cur.fetchall()]
+            return [{"id": row[0], "data": row[1], "prompt": row[2], "mime_type": row[3]} for row in cur.fetchall()]
+
+def get_image_by_id(image_id):
+    """通过图片 ID 获取单张图片"""
+    pool = get_db_pool()
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT base64_data, prompt, mime_type FROM app_images WHERE id = %s",
+                (image_id,)
+            )
+            row = cur.fetchone()
+            if row:
+                return {"data": row[0], "prompt": row[1], "mime_type": row[2]}
+            return None
 
 def get_recent_images(thread_id, limit=1):
     """获取最近生成的图片（用于即时回显Fallback）"""

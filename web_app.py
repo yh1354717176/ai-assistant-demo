@@ -316,23 +316,37 @@ def show_chat_interface():
                         final_response_text = str(content)
                 
                 # 尝试获取新生成的图片
-                current_generated_imgs = image_store.get_and_clear()
-                print(f"🖼️ 内存图片: {len(current_generated_imgs)} 张")
+                # 优先方案：从消息中提取 IMAGE_ID
+                import re
+                image_id_match = re.search(r'\[IMAGE_ID:(\d+)\]', final_response_text)
                 
-                if current_generated_imgs:
-                    final_images = current_generated_imgs
+                if image_id_match:
+                    image_id = int(image_id_match.group(1))
+                    import auth_service
+                    img = auth_service.get_image_by_id(image_id)
+                    if img:
+                        final_images = [img]
+                        # 从显示文本中移除 IMAGE_ID 标记
+                        final_response_text = re.sub(r'\[IMAGE_ID:\d+\]', '图片已生成。', final_response_text)
+                        print(f"✅ 通过 IMAGE_ID:{image_id} 精确获取图片")
                 else:
-                    # Fallback: 如果内存没拿到，去 DB 查最近的
-                    # 放宽条件：只要是图片生成相关的回复都尝试获取
-                    response_text_lower = str(final_response_text).lower()
-                    image_keywords = ["图片", "生成", "绘制", "画", "generated", "image", "✅", "成功"]
+                    # 备选方案：从内存获取
+                    current_generated_imgs = image_store.get_and_clear()
+                    print(f"🖼️ 内存图片: {len(current_generated_imgs)} 张")
                     
-                    if any(kw.lower() in response_text_lower for kw in image_keywords):
-                        import auth_service
-                        recent_db_imgs = auth_service.get_recent_images(current_thread_id, limit=5)
-                        if recent_db_imgs:
-                            final_images = recent_db_imgs
-                            print(f"✅ 从 DB 成功捞取 {len(final_images)} 张最近图片")
+                    if current_generated_imgs:
+                        final_images = current_generated_imgs
+                    else:
+                        # Fallback: 如果内存没拿到，去 DB 查最近的
+                        response_text_lower = str(final_response_text).lower()
+                        image_keywords = ["图片", "生成", "绘制", "画", "generated", "image", "✅", "成功"]
+                        
+                        if any(kw.lower() in response_text_lower for kw in image_keywords):
+                            import auth_service
+                            recent_db_imgs = auth_service.get_recent_images(current_thread_id, limit=5)
+                            if recent_db_imgs:
+                                final_images = recent_db_imgs
+                                print(f"✅ 从 DB 成功捞取 {len(final_images)} 张最近图片")
                     
         except Exception as e:
             final_response_text = f"❌ 系统错误: {str(e)}"
@@ -367,27 +381,18 @@ def restore_history(thread_id):
         # 1. 获取文本历史
         if current_state and current_state.values and "messages" in current_state.values:
             from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
+            import re
+            
             raw_msgs = current_state.values["messages"]
             
-            # 2. 获取该 Thread 所有图片历史 (按创建时间升序)
+            # 2. 获取该 Thread 所有图片历史，建立 ID -> 图片 映射
             import auth_service
             db_images = auth_service.get_images_for_thread(thread_id)
+            image_by_id = {img["id"]: img for img in db_images if "id" in img}
             
-            # 图片生成成功的关键词（LLM 工具调用成功时会返回这些）
-            # 注意："好的，图片已生成" 是 LLM 自己说的，不一定真的生成了
-            # 真正成功的标志是 "✅ 图片已成功生成！" 或类似的工具返回
-            SUCCESS_KEYWORDS = ["✅", "成功生成", "已成功", "successfully"]
-            
-            # 改进的匹配策略 3.0：基于 Prompt 相似度 + 顺序去重
-            # 解决问题：
-            # 1. 简单顺序匹配会导致多余的"孤儿图片"让后续图片错位
-            # 2. 简单 Prompt 匹配无法处理重复的相同请求
-            
-            # 第一步：整理所有 User 消息及其位置
-            user_msgs_indices = []
             temp_msgs = []
             
-            for i, msg in enumerate(raw_msgs):
+            for msg in raw_msgs:
                 if isinstance(msg, SystemMessage): continue
                 if isinstance(msg, ToolMessage): continue
                 
@@ -397,106 +402,33 @@ def restore_history(thread_id):
                     text_parts = [item["text"] for item in content if isinstance(item, dict) and "text" in item]
                     content = "\n".join(text_parts)
                 
+                content_str = str(content)
+                
                 # 跳过空内容的 Assistant 消息
-                if role == "assistant" and not str(content).strip():
+                if role == "assistant" and not content_str.strip():
                     continue
-
+                
+                # 精确匹配：从消息内容中提取 IMAGE_ID
+                images = []
+                if role == "assistant":
+                    image_id_matches = re.findall(r'\[IMAGE_ID:(\d+)\]', content_str)
+                    for id_str in image_id_matches:
+                        img_id = int(id_str)
+                        if img_id in image_by_id:
+                            images.append(image_by_id[img_id])
+                            # 从 text 中移除 ID 标记
+                            content_str = re.sub(r'\[IMAGE_ID:\d+\]', '图片已生成。', content_str)
+                
                 msg_obj = {
                     "role": role,
-                    "content": str(content),
-                    "images": []
+                    "content": content_str,
+                    "images": images
                 }
                 temp_msgs.append(msg_obj)
-                
-                if role == "user":
-                    user_msgs_indices.append(len(temp_msgs) - 1)
-            
-            # 记录 User 消息是否已分配图片，防止一张图配给多个人，或一个人吃多张图（针对单次生成）
-            # 使用一个计数器，允许一个 User 消息关联多张图（如果一次生成多张），但我们会优先填满前面的
-            user_msg_image_counts = {idx: 0 for idx in user_msgs_indices}
-            
-            # 第二步：为每张图片寻找最佳归属
-            unmatched_images = []
-            
-            for img in db_images:
-                prompt = img.get("prompt", "") or ""
-                prompt_lower = prompt.lower()
-                
-                best_match_idx = -1
-                best_score = 0
-                
-                # 遍历所有 User 消息寻找 Prompt 匹配
-                # 我们倾向于匹配：相似度高 > 尚未分配图片 > 时间较早
-                for u_idx in user_msgs_indices:
-                    u_msg = temp_msgs[u_idx]
-                    u_content = u_msg["content"].lower()
-                    
-                    # 相似度计算
-                    prompt_words = [w for w in prompt_lower.split() if len(w) > 1]
-                    if not prompt_words:
-                        score = 0.1 if "图" in u_content else 0
-                    else:
-                        match_count = sum(1 for w in prompt_words if w in u_content)
-                        score = match_count / len(prompt_words)
-                    
-                    # 惩罚机制：如果该消息已经分配了图片，稍微降低其优先级，防止堆积
-                    # 除非相似度极高 (完全匹配)
-                    penalty = 0.05 * user_msg_image_counts[u_idx]
-                    final_score = score - penalty
-                    
-                    # 阈值判断 (0.3 表示至少有一部分关键词重叠)
-                    if final_score > 0.3 and final_score > best_score:
-                        best_score = final_score
-                        best_match_idx = u_idx
-                
-                # 如果找到了足够好的匹配
-                if best_match_idx != -1:
-                    # 找到该 User 消息后的第一条 Assistant 消息
-                    target_assistant_idx = -1
-                    for j in range(best_match_idx + 1, len(temp_msgs)):
-                        if temp_msgs[j]["role"] == "assistant":
-                            target_assistant_idx = j
-                            break
-                    
-                    if target_assistant_idx != -1:
-                        temp_msgs[target_assistant_idx]["images"].append(img)
-                        user_msg_image_counts[best_match_idx] += 1
-                        continue
-                
-                # 如果没找到匹配，加入未匹配列表
-                unmatched_images.append(img)
-            
-            # 第三步：处理未匹配图片
-            # 只有当 Assistant 明确表示"成功生成"时，才把未匹配图片塞给它
-            # 这能避免把旧的"孤儿图片"塞给新的请求
-            if unmatched_images:
-                img_cursor = 0
-                for msg in temp_msgs:
-                    if img_cursor >= len(unmatched_images): break
-                    
-                    if msg["role"] == "assistant":
-                        content = msg["content"]
-                        # 检查成功标志
-                        if any(kw in content for kw in SUCCESS_KEYWORDS):
-                            # 如果这里还没图（避免覆盖了已经精确匹配的图），就补一张
-                            if not msg["images"]:
-                                msg["images"].append(unmatched_images[img_cursor])
-                                img_cursor += 1
-                
-                # 剩下的实在没地去的图片，如果不重要可以丢弃，或者挂在最后
-                # 为了不产生误导，我们选择只挂在最后一条，如果最后一条是 Assistant 的话
-                # 且只有当确实是刚生成的（判断时间？难），为了安全起见，我们暂不显示这些"幽灵图片"
-                # 除非用户明确要求显示所有历史。
-                # 妥协方案：如果最后一条消息包含"图片"相关词，挂上去
-                while img_cursor < len(unmatched_images):
-                    last_msg = temp_msgs[-1]
-                    if last_msg["role"] == "assistant" and any(k in last_msg["content"] for k in ["图片", "image"]):
-                        last_msg["images"].append(unmatched_images[img_cursor])
-                    img_cursor += 1
 
             restored_msgs = temp_msgs
             st.session_state["messages"] = restored_msgs
-            print(f"✅ 成功恢复 {len(restored_msgs)} 条消息，{len(db_images)} 张图片 (未匹配: {len(unmatched_images)})")
+            print(f"✅ 成功恢复 {len(restored_msgs)} 条消息，{len(db_images)} 张图片 (通过 ID 精确匹配)")
 
     except Exception as e:
         print(f"Restore Error: {e}")

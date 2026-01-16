@@ -62,11 +62,12 @@ def generate_illustration(prompt: str, config: RunnableConfig) -> str:
                 if not thread_id and "thread_id" in st.session_state:
                     thread_id = st.session_state["thread_id"]
 
+                image_id = None
                 try:
                     import auth_service
                     if thread_id:
-                        auth_service.save_image_to_db(thread_id, prompt, b64_data, mime_type)
-                        print(f"✅ 图片已存储到数据库 app_images (Thread: {thread_id})")
+                        image_id = auth_service.save_image_to_db(thread_id, prompt, b64_data, mime_type)
+                        print(f"✅ 图片已存储到数据库 app_images (ID: {image_id}, Thread: {thread_id})")
                     else:
                         print(f"⚠️ 无法获取 thread_id，跳过 DB 存储")
                         
@@ -78,11 +79,15 @@ def generate_illustration(prompt: str, config: RunnableConfig) -> str:
                 store.add({
                     'data': b64_data,
                     'mime_type': mime_type,
-                    'prompt': prompt[:50]
+                    'prompt': prompt[:50],
+                    'image_id': image_id  # 同时存储 ID
                 })
                 
-                # 只返回简短消息给 LLM，避免 token 溢出
-                return f"✅ 图片已成功生成！（提示词：{prompt[:30]}...）图片将自动显示在对话中。"
+                # 返回包含 image_id 的消息，便于精确匹配
+                if image_id:
+                    return f"✅ 图片已成功生成！[IMAGE_ID:{image_id}]"
+                else:
+                    return f"✅ 图片已成功生成！（提示词：{prompt[:30]}...）"
             
             return "❌ 生成成功但未返回图片数据。"
             
