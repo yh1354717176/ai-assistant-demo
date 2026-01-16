@@ -108,3 +108,24 @@ def get_recent_images(thread_id, limit=1):
                 (thread_id, limit)
             )
             return [{"data": row[0], "prompt": row[1], "mime_type": row[2]} for row in cur.fetchall()]
+
+def delete_thread(thread_id, user_id):
+    """删除指定的对话"""
+    pool = get_db_pool()
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            # 先删除关联的图片记录
+            cur.execute("DELETE FROM app_images WHERE thread_id = %s", (thread_id,))
+            # 删除 checkpoints (如果 LangGraph 表在同一个库，这里只能删业务表记录，LangGraph 自己的表可能还是脏数据但影响不大)
+            # 实际上 LangGraph 的 checkpoint 是只有 row 记录，我们这里主要删业务层的 thread 记录
+            cur.execute("DELETE FROM user_threads WHERE thread_id = %s AND user_id = %s", (thread_id, user_id))
+
+def rename_thread(thread_id, new_title, user_id):
+    """重命名对话"""
+    pool = get_db_pool()
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE user_threads SET title = %s, updated_at = CURRENT_TIMESTAMP WHERE thread_id = %s AND user_id = %s",
+                (new_title, thread_id, user_id)
+            )

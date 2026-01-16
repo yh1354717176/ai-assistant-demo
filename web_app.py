@@ -150,13 +150,39 @@ def show_chat_interface():
         if threads:
             for tid, title, updated_at in threads:
                 tid_str = str(tid)
-                # 简单样式区分当前选中
-                label = f"{'🟢' if tid_str == st.session_state['thread_id'] else '📄'} {title or '未命名对话'}"
-                if st.button(label, key=tid_str, use_container_width=True):
-                    st.session_state["thread_id"] = tid_str
-                    st.session_state["messages"] = [] # 清空当前 UI，等待 reload
-                    st.query_params["thread_id"] = tid_str
-                    st.rerun()
+                is_active = (tid_str == st.session_state['thread_id'])
+                
+                # 使用 columns 布局，左边是对称标题按钮，右边是操作菜单
+                col1, col2 = st.columns([0.8, 0.2])
+                
+                with col1:
+                    label = f"{'🟢' if is_active else '📄'} {title or '未命名对话'}"
+                    if st.button(label, key=f"btn_{tid_str}", use_container_width=True):
+                        st.session_state["thread_id"] = tid_str
+                        st.session_state["messages"] = []
+                        st.query_params["thread_id"] = tid_str
+                        st.rerun()
+                
+                with col2:
+                    # 使用 popover 提供更多操作
+                    with st.popover("⋮", use_container_width=True):
+                        st.write(f"操作: {title}")
+                        
+                        # 重命名功能
+                        with st.form(key=f"rename_{tid_str}"):
+                            new_name = st.text_input("新名称", value=title)
+                            if st.form_submit_button("重命名"):
+                                auth_service.rename_thread(tid_str, new_name, st.session_state["user_id"])
+                                st.rerun()
+                        
+                        # 删除功能
+                        if st.button("🗑️ 删除", key=f"del_{tid_str}", type="primary"):
+                            auth_service.delete_thread(tid_str, st.session_state["user_id"])
+                            # 如果删除的是当前对话，重置 ID
+                            if is_active:
+                                st.session_state["thread_id"] = None
+                                st.query_params.clear()
+                            st.rerun()
         else:
             st.caption("暂无历史记录")
 
