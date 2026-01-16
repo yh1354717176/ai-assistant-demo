@@ -129,11 +129,12 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
             client = genai.Client(api_key=api_key)
             
             # 优先尝试的模型列表
-            # Note: 'gemini-2.5-flash-image' sometimes returns 404 if not enabled/available.
-            # 'imagen-3.0-generate-001' is the stable Imagen 3 model.
+            # 根据错误日志更新可用模型
             candidate_models = [
-                'imagen-3.0-generate-001',
-                'gemini-2.5-flash-image',
+                'imagen-4.0-generate-001',
+                'gemini-3-pro-image-preview',
+                'gemini-2.0-flash-exp-image-generation',
+                'imagen-3.0-generate-001', # Keep as fallback
             ]
             
             last_error = None
@@ -156,6 +157,7 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
                         
                 except Exception as e:
                     last_error = e
+                    # print(f"Model {model_name} failed: {e}") # Debug only
                     continue # Try next model
             
             # If we get here, all models failed.
@@ -214,7 +216,6 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
 3. 回答要友好、简洁、直接。
 4. **格式警告**: 当工具参数需要 JSON 字符串时（如 calendars_info），**必须**确保内部使用双引号 `"` 包裹键和值（例如 `[{"key": "value"}]`），严禁使用单引号 `'`，否则会导致系统崩溃。
 5. **图片生成**: 当用户要求"配图"、"插图"、"画一张图"或提到 Nano Banana 时，请调用 `generate_illustration` 工具。工具会返回生成的图片，你需要将该图片展示给用户。
-
 关于日历工具的使用：
 - **步骤**: 查询日程前，**必须先调用** `get_calendars_info` 获取日历列表。
 - 然后调用 `search_events`，将 `get_calendars_info` 的完整返回值（保持原样，确保双引号）作为 `calendars_info` 参数传入。
