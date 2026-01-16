@@ -72,12 +72,14 @@ st.caption("我是由 LangGraph 驱动的智能体，能查文档，也能算工
 # 2. 缓存资源 (避免每次刷新都重连数据库)
 # ==========================================
 @st.cache_resource
-def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
+def get_graph(_version="v5.3"):  # 修改版本号强制刷新缓存
     """初始化图结构，只执行一次"""
     print(f"🔄 正在初始化 LangGraph... (Cache Version: {_version})")
 
     # --- 模型与数据库 ---
-    llm = ChatGoogleGenerativeAI(model="gemini-3-pro-preview")  # 使用更强的模型 // gemini-3-flash-preview
+    # 注意：gemini-3-pro-preview 是图片生成专用模型，不适合作为聊天 LLM
+    # gemini-2.5-flash 是稳定的多用途模型
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
     embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
 
     # Qdrant 连接配置 (支持本地和云端)
