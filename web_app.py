@@ -195,6 +195,10 @@ def show_chat_interface():
         # 2. 调用 Agent
         config_dict = {"configurable": {"thread_id": current_thread_id}}
         
+        # 初始化变量，防止 UnboundLocalError
+        ai_text = "⚠️由于未知错误，未能获取回复。"
+        new_images = []
+        
         with st.spinner("思考中..."):
             # 构建输入
             message_content = [{"type": "text", "text": user_input}]
