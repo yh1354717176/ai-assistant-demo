@@ -12,6 +12,7 @@ langchain-community
 
 # Google Gemini AI
 langchain-google-genai
+google-genai
 
 # 向量数据库 (Qdrant)
 langchain-qdrant
