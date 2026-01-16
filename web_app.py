@@ -132,7 +132,7 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
             # 需要配置响应模态为 IMAGE
             try:
                 response = client.models.generate_content(
-                    model='gemini-2.5-flash-image',
+                    model='gemini-2.0-flash-preview-image-generation',
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         response_modalities=['IMAGE']
