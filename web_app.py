@@ -30,21 +30,38 @@ except Exception as e:
 # 初始化 Cookie 控制器
 controller = CookieController()
 
-# 尝试从 Cookies 恢复登录状态
-cookies = controller.getAll()
+# ==========================================
+# Cookie 读取与登录状态恢复
+# 注意：streamlit_cookies_controller 的 getAll() 在首次加载时可能为空
+# 需要处理异步读取的情况
+# ==========================================
+def get_cookie_value(key, default=None):
+    """安全获取 Cookie 值，处理 None 和空字典情况"""
+    try:
+        cookies = controller.getAll()
+        if cookies and isinstance(cookies, dict):
+            return cookies.get(key, default)
+        return default
+    except Exception:
+        return default
 
-# 用户登录状态
+# 用户登录状态初始化
 if "user_id" not in st.session_state:
-    # 检查 Cookie 是否有 user_id
-    cookie_user_id = cookies.get("user_id")
-    cookie_username = cookies.get("username")
+    st.session_state["user_id"] = None
+    st.session_state["username"] = None
+
+# 每次运行时尝试从 Cookie 恢复（处理首次加载 Cookie 未就绪的情况）
+if st.session_state["user_id"] is None:
+    cookie_user_id = get_cookie_value("user_id")
+    cookie_username = get_cookie_value("username")
     
     if cookie_user_id and cookie_username:
-        st.session_state["user_id"] = int(cookie_user_id)
-        st.session_state["username"] = cookie_username
-    else:
-        st.session_state["user_id"] = None
-        st.session_state["username"] = None
+        try:
+            st.session_state["user_id"] = int(cookie_user_id)
+            st.session_state["username"] = cookie_username
+        except (ValueError, TypeError):
+            # Cookie 值无效，保持登出状态
+            pass
 
 # 当前对话 Thread ID
 query_params = st.query_params
@@ -337,13 +354,20 @@ def restore_history(thread_id):
             # 2. 获取该 Thread 所有图片历史 (时间序)
             import auth_service
             db_images = auth_service.get_images_for_thread(thread_id)
-            # 简单的关联逻辑：将图片分配给它们之后的下一条 Assistant 消息？
-            # 或者直接把所有图片合并进流？
-            # 这是一个难点：无法精确知道哪张图对应哪条消息。
-            # 简易策略：把所有图片收集起来，如果 Assistant 的回复里含有 "图片已生成" 字样，
-            # 就按顺序取出一张图片附上去。
+            
+            # 改进的匹配策略：
+            # - 先收集所有 Assistant 消息的索引
+            # - 使用更宽松的图片关键词匹配
+            # - 按时间顺序将图片分配给 Assistant 消息
+            
+            # 图片匹配关键词（更宽松）
+            IMAGE_KEYWORDS = [
+                "图片", "生成", "绘制", "画", "created", "generated", 
+                "illustration", "image", "✅", "成功"
+            ]
             
             img_cursor = 0
+            assistant_msg_count = 0  # 跟踪 Assistant 消息数量
             
             for msg in raw_msgs:
                 if isinstance(msg, SystemMessage): continue
@@ -357,12 +381,15 @@ def restore_history(thread_id):
                 
                 # Check for images attachment
                 attached_images = []
-                if role == "assistant" and ("图片" in str(content) or "generated" in str(content)):
-                    # 尝试挂载一张或多张 DB 图片
-                    # 这里是模糊匹配，假设顺序一致
-                    # 如果 DB 里有足够多的图片，且还没被分配
-                    if img_cursor < len(db_images):
-                        # 挂载一张
+                if role == "assistant":
+                    assistant_msg_count += 1
+                    content_lower = str(content).lower()
+                    
+                    # 使用更宽松的关键词匹配
+                    has_image_keyword = any(kw.lower() in content_lower for kw in IMAGE_KEYWORDS)
+                    
+                    if has_image_keyword and img_cursor < len(db_images):
+                        # 挂载一张图片
                         attached_images.append(db_images[img_cursor])
                         img_cursor += 1
                 
@@ -376,22 +403,26 @@ def restore_history(thread_id):
                     "images": attached_images
                 })
             
-            # 如果还有剩余图片没显示（比如刚生成的），挂在最后一条
+            # 如果还有剩余图片没显示（比如刚生成的），挂在最后一条 Assistant 消息
             while img_cursor < len(db_images):
                 if restored_msgs and restored_msgs[-1]["role"] == "assistant":
                     restored_msgs[-1]["images"].append(db_images[img_cursor])
                 else:
+                    # 如果没有 Assistant 消息，创建一个专门显示图片的消息
                     restored_msgs.append({
                         "role": "assistant", 
-                        "content": "🖼️ 补充图片",
+                        "content": "🖼️ 生成的图片",
                         "images": [db_images[img_cursor]]
                     })
                 img_cursor += 1
                 
             st.session_state["messages"] = restored_msgs
+            print(f"✅ 成功恢复 {len(restored_msgs)} 条消息，{len(db_images)} 张图片")
 
     except Exception as e:
         print(f"Restore Error: {e}")
+        import traceback
+        traceback.print_exc()
 
 # ==========================================
 # 4. 路由控制
