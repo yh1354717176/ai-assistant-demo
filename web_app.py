@@ -6,7 +6,7 @@ from streamlit_cookies_controller import CookieController
 
 # 导入自定义模块
 import config
-import auth_service
+# import auth_service  <-- Moved to inner scope
 import database
 from agent import get_graph
 from image_store import get_image_store
@@ -88,6 +88,7 @@ def login_page():
                 if not username or not password:
                     st.error("请输入用户名和密码")
                 else:
+                    import auth_service
                     uid, msg = auth_service.login_user(username, password)
                     if uid:
                         st.session_state["user_id"] = uid
@@ -110,6 +111,7 @@ def login_page():
                 if not new_user or not new_pass:
                     st.error("请输入用户名和密码")
                 else:
+                    import auth_service
                     uid, msg = auth_service.register_user(new_user, new_pass)
                     if uid:
                         st.success(f"注册成功！请切换到登录标签页进行登录。")
@@ -139,6 +141,7 @@ def show_chat_interface():
         
         # 新建对话按钮
         if st.button("➕ 新建对话", use_container_width=True):
+            import auth_service
             new_tid = auth_service.create_new_thread(st.session_state["user_id"], title="新对话")
             st.session_state["thread_id"] = new_tid
             st.session_state["messages"] = []
@@ -146,6 +149,7 @@ def show_chat_interface():
             st.rerun()
             
         # 历史列表
+        import auth_service
         threads = auth_service.get_user_threads(st.session_state["user_id"])
         if threads:
             for tid, title, updated_at in threads:
@@ -203,6 +207,7 @@ def show_chat_interface():
     # 检查是否有 thread_id，如果没有（刚登录），创建一个默认的
     if not st.session_state.get("thread_id"):
         # 自动创建第一个对话
+        import auth_service
         new_tid = auth_service.create_new_thread(st.session_state["user_id"], title="默认对话")
         st.session_state["thread_id"] = new_tid
         st.query_params["thread_id"] = new_tid
@@ -288,6 +293,7 @@ def show_chat_interface():
                     # Fallback: 如果内存没拿到（可能 tools.py 直接存 DB 了但没存内存），去 DB 查最近的
                     # 只有当回复里明确提到生成了图片时才查，避免误查
                     if "图片" in str(final_response_text) or "generated" in str(final_response_text).lower():
+                        import auth_service
                         recent_db_imgs = auth_service.get_recent_images(current_thread_id, limit=2)
                         if recent_db_imgs:
                             final_images = recent_db_imgs
@@ -328,6 +334,7 @@ def restore_history(thread_id):
             raw_msgs = current_state.values["messages"]
             
             # 2. 获取该 Thread 所有图片历史 (时间序)
+            import auth_service
             db_images = auth_service.get_images_for_thread(thread_id)
             # 简单的关联逻辑：将图片分配给它们之后的下一条 Assistant 消息？
             # 或者直接把所有图片合并进流？
