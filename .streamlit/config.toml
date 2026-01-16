@@ -1,0 +1,9 @@
+[client]
+showErrorDetails = false
+
+[server]
+fileWatcherType = "none"
+
+[deprecation]
+showPyplotGlobalUse = false
+showfileUploaderEncoding = false

@@ -1,4 +1,9 @@
 import streamlit as st
+# Patch st.cache for streamlit-cookies-manager compatibility
+# 该库使用了过时的 st.cache，将其指向新的 st.cache_resource
+if not hasattr(st, "cache"):
+    st.cache = st.cache_resource
+
 import base64
 import datetime
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
