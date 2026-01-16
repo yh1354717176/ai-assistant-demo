@@ -281,12 +281,21 @@ if "tool_calls" not in st.session_state:
 if "thread_id" not in st.session_state:
     # 给每个用户生成一个随机 ID，或者固定一个方便测试
     import uuid
-
     st.session_state["thread_id"] = str(uuid.uuid4())
 
 # 存储上传的图片
 if "uploaded_image" not in st.session_state:
     st.session_state["uploaded_image"] = None
+
+# 🔄 清除对话按钮（放在标题下方）
+col1, col2 = st.columns([6, 1])
+with col2:
+    if st.button("🗑️ 清除对话"):
+        import uuid
+        st.session_state["messages"] = []
+        st.session_state["tool_calls"] = []
+        st.session_state["thread_id"] = str(uuid.uuid4())  # 强制生成新的 thread_id
+        st.rerun()
 
 # ==========================================
 # 4. 渲染聊天界面
