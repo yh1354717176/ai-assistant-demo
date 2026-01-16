@@ -95,19 +95,21 @@ def get_recent_images(thread_id, limit=1):
     pool = get_db_pool()
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            # 获取最近30秒内生成的图片
+            # 获取最近 120 秒内生成的图片（增加窗口以应对慢生成）
             cur.execute(
                 """
                 SELECT base64_data, prompt, mime_type 
                 FROM app_images 
                 WHERE thread_id = %s 
-                AND created_at > NOW() - INTERVAL '30 seconds'
+                AND created_at > NOW() - INTERVAL '120 seconds'
                 ORDER BY created_at DESC
                 LIMIT %s
                 """,
                 (thread_id, limit)
             )
-            return [{"data": row[0], "prompt": row[1], "mime_type": row[2]} for row in cur.fetchall()]
+            result = [{"data": row[0], "prompt": row[1], "mime_type": row[2]} for row in cur.fetchall()]
+            print(f"🔍 DB 查询最近图片: thread={thread_id}, 找到 {len(result)} 张")
+            return result
 
 def delete_thread(thread_id, user_id):
     """删除指定的对话"""

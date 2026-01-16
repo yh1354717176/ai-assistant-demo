@@ -320,14 +320,19 @@ def show_chat_interface():
                 
                 # 尝试获取新生成的图片
                 current_generated_imgs = image_store.get_and_clear()
+                print(f"🖼️ 内存图片: {len(current_generated_imgs)} 张")
+                
                 if current_generated_imgs:
                     final_images = current_generated_imgs
                 else:
-                    # Fallback: 如果内存没拿到（可能 tools.py 直接存 DB 了但没存内存），去 DB 查最近的
-                    # 只有当回复里明确提到生成了图片时才查，避免误查
-                    if "图片" in str(final_response_text) or "generated" in str(final_response_text).lower():
+                    # Fallback: 如果内存没拿到，去 DB 查最近的
+                    # 放宽条件：只要是图片生成相关的回复都尝试获取
+                    response_text_lower = str(final_response_text).lower()
+                    image_keywords = ["图片", "生成", "绘制", "画", "generated", "image", "✅", "成功"]
+                    
+                    if any(kw.lower() in response_text_lower for kw in image_keywords):
                         import auth_service
-                        recent_db_imgs = auth_service.get_recent_images(current_thread_id, limit=2)
+                        recent_db_imgs = auth_service.get_recent_images(current_thread_id, limit=5)
                         if recent_db_imgs:
                             final_images = recent_db_imgs
                             print(f"✅ 从 DB 成功捞取 {len(final_images)} 张最近图片")
@@ -367,71 +372,118 @@ def restore_history(thread_id):
             from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
             raw_msgs = current_state.values["messages"]
             
-            # 2. 获取该 Thread 所有图片历史 (时间序)
+            # 2. 获取该 Thread 所有图片历史 (时间序，包含 prompt)
             import auth_service
             db_images = auth_service.get_images_for_thread(thread_id)
             
             # 改进的匹配策略：
-            # - 先收集所有 Assistant 消息的索引
-            # - 使用更宽松的图片关键词匹配
-            # - 按时间顺序将图片分配给 Assistant 消息
+            # 使用图片的 prompt 来匹配最近的 User 请求
+            # 然后将图片附加到该 User 请求之后的 Assistant 回复上
             
-            # 图片匹配关键词（更宽松）
+            # 图片匹配关键词
             IMAGE_KEYWORDS = [
                 "图片", "生成", "绘制", "画", "created", "generated", 
                 "illustration", "image", "✅", "成功"
             ]
             
-            img_cursor = 0
-            assistant_msg_count = 0  # 跟踪 Assistant 消息数量
-            
+            # 第一遍：收集所有消息，记录 User 和 Assistant 消息的关系
+            temp_msgs = []
             for msg in raw_msgs:
                 if isinstance(msg, SystemMessage): continue
-                if isinstance(msg, ToolMessage): continue # Skip raw tool outputs
+                if isinstance(msg, ToolMessage): continue
                 
                 role = "user" if isinstance(msg, HumanMessage) else "assistant"
                 content = msg.content
                 if isinstance(content, list):
-                     text_parts = [i["text"] for i in content if isinstance(i, dict) and "text" in i]
-                     content = "\n".join(text_parts)
+                    text_parts = [i["text"] for i in content if isinstance(i, dict) and "text" in i]
+                    content = "\n".join(text_parts)
                 
-                # Check for images attachment
-                attached_images = []
-                if role == "assistant":
-                    assistant_msg_count += 1
-                    content_lower = str(content).lower()
-                    
-                    # 使用更宽松的关键词匹配
-                    has_image_keyword = any(kw.lower() in content_lower for kw in IMAGE_KEYWORDS)
-                    
-                    if has_image_keyword and img_cursor < len(db_images):
-                        # 挂载一张图片
-                        attached_images.append(db_images[img_cursor])
-                        img_cursor += 1
-                
-                if role == "assistant" and not str(content).strip() and not attached_images:
-                    # Skip empty assistant messages (often tool calls)
+                if role == "assistant" and not str(content).strip():
                     continue
-
-                restored_msgs.append({
+                    
+                temp_msgs.append({
                     "role": role,
                     "content": str(content),
-                    "images": attached_images
+                    "images": []
                 })
             
-            # 如果还有剩余图片没显示（比如刚生成的），挂在最后一条 Assistant 消息
-            while img_cursor < len(db_images):
-                if restored_msgs and restored_msgs[-1]["role"] == "assistant":
-                    restored_msgs[-1]["images"].append(db_images[img_cursor])
-                else:
-                    # 如果没有 Assistant 消息，创建一个专门显示图片的消息
-                    restored_msgs.append({
-                        "role": "assistant", 
-                        "content": "🖼️ 生成的图片",
-                        "images": [db_images[img_cursor]]
-                    })
-                img_cursor += 1
+            # 第二遍：将图片匹配到正确的 Assistant 回复
+            # 逻辑：对于每张图片，根据 prompt 找到最匹配的 User 消息
+            # 然后将图片附加到紧随其后的 Assistant 消息上
+            
+            used_images = set()  # 记录已分配的图片索引
+            
+            for img_idx, img in enumerate(db_images):
+                prompt = img.get("prompt", "") or ""
+                prompt_lower = prompt.lower()
                 
+                best_match_idx = -1
+                best_score = 0
+                
+                # 遍历消息，找到与 prompt 最匹配的 User 消息
+                for i, m in enumerate(temp_msgs):
+                    if m["role"] == "user":
+                        user_content = m["content"].lower()
+                        
+                        # 计算匹配分数：prompt 中的词在用户消息中出现的比例
+                        prompt_words = [w for w in prompt_lower.split() if len(w) > 1]
+                        if prompt_words:
+                            match_count = sum(1 for w in prompt_words if w in user_content)
+                            score = match_count / len(prompt_words)
+                        else:
+                            # 如果 prompt 为空或太短，使用简单的包含检查
+                            score = 0.1 if any(kw in user_content for kw in ["图", "画", "生成"]) else 0
+                        
+                        if score > best_score:
+                            best_score = score
+                            best_match_idx = i
+                
+                # 找到匹配的 User 消息后，将图片附加到紧随其后的 Assistant 消息
+                if best_match_idx >= 0:
+                    # 找到这个 User 消息之后的第一个 Assistant 消息
+                    for j in range(best_match_idx + 1, len(temp_msgs)):
+                        if temp_msgs[j]["role"] == "assistant":
+                            content_lower = temp_msgs[j]["content"].lower()
+                            # 验证这是一条图片生成相关的回复
+                            if any(kw.lower() in content_lower for kw in IMAGE_KEYWORDS):
+                                # 检查这个位置是否已经分配了图片
+                                if j not in used_images or best_score > 0.5:
+                                    temp_msgs[j]["images"].append(img)
+                                    used_images.add(j)
+                                    break
+                            # 即使没有关键词，如果匹配分数很高，也附加
+                            elif best_score > 0.5:
+                                temp_msgs[j]["images"].append(img)
+                                used_images.add(j)
+                                break
+            
+            # 第三遍：处理未匹配的图片（按顺序附加到有关键词的 Assistant 消息）
+            unmatched_img_indices = [i for i in range(len(db_images)) if i not in {
+                db_images.index(img) for m in temp_msgs for img in m["images"]
+            }]
+            
+            if unmatched_img_indices:
+                for temp_idx, m in enumerate(temp_msgs):
+                    if m["role"] == "assistant" and not m["images"]:
+                        content_lower = m["content"].lower()
+                        if any(kw.lower() in content_lower for kw in IMAGE_KEYWORDS):
+                            if unmatched_img_indices:
+                                img_idx = unmatched_img_indices.pop(0)
+                                m["images"].append(db_images[img_idx])
+                
+                # 剩余的未匹配图片挂在最后一条 Assistant 消息
+                while unmatched_img_indices:
+                    img_idx = unmatched_img_indices.pop(0)
+                    if temp_msgs and temp_msgs[-1]["role"] == "assistant":
+                        temp_msgs[-1]["images"].append(db_images[img_idx])
+                    else:
+                        temp_msgs.append({
+                            "role": "assistant",
+                            "content": "🖼️ 生成的图片",
+                            "images": [db_images[img_idx]]
+                        })
+            
+            restored_msgs = temp_msgs
             st.session_state["messages"] = restored_msgs
             print(f"✅ 成功恢复 {len(restored_msgs)} 条消息，{len(db_images)} 张图片")
 
