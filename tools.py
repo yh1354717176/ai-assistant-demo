@@ -37,57 +37,60 @@ def generate_illustration(prompt: str, config: RunnableConfig) -> str:
         client = genai.Client(api_key=api_key)
         
         try:
-            # 使用 Imagen 3 专用 API
-            response = client.models.generate_images(
-                model='imagen-3.0-generate-002',
-                prompt=prompt,
-                config=types.GenerateImagesConfig(
-                    number_of_images=1,
-                    aspect_ratio="1:1",
-                    safety_filter_level="BLOCK_MEDIUM_AND_ABOVE"
+            # 使用 Gemini 2.0 Flash 的多模态生成能力
+            response = client.models.generate_content(
+                model='gemini-2.0-flash-exp',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=['Text', 'Image']
                 )
             )
             
-            # 检查是否有生成的图片
-            if response.generated_images and len(response.generated_images) > 0:
-                img = response.generated_images[0]
-                img_data = img.image.image_bytes
-                mime_type = 'image/png'
-                b64_data = base64.b64encode(img_data).decode('utf-8')
-                
-                # 优先从 Config 获取 context (Cross-thread safe)
-                thread_id = config.get("configurable", {}).get("thread_id")
-                
-                # Fallback to session_state if config is empty (Main thread dev mode)
-                if not thread_id and "thread_id" in st.session_state:
-                    thread_id = st.session_state["thread_id"]
+            # 从响应中提取图片
+            for part in response.candidates[0].content.parts:
+                if part.inline_data is not None:
+                    img_data = part.inline_data.data
+                    mime_type = part.inline_data.mime_type or 'image/png'
+                    b64_data = base64.b64encode(img_data).decode('utf-8')
+                    
+                    # 优先从 Config 获取 context (Cross-thread safe)
+                    thread_id = config.get("configurable", {}).get("thread_id")
+                    
+                    # Fallback to session_state if config is empty (Main thread dev mode)
+                    if not thread_id and "thread_id" in st.session_state:
+                        thread_id = st.session_state["thread_id"]
 
-                image_id = None
-                try:
-                    import auth_service
-                    if thread_id:
-                        image_id = auth_service.save_image_to_db(thread_id, prompt, b64_data, mime_type)
-                        print(f"✅ 图片已存储到数据库 app_images (ID: {image_id}, Thread: {thread_id})")
+                    image_id = None
+                    try:
+                        import auth_service
+                        if thread_id:
+                            image_id = auth_service.save_image_to_db(thread_id, prompt, b64_data, mime_type)
+                            print(f"✅ 图片已存储到数据库 app_images (ID: {image_id}, Thread: {thread_id})")
+                        else:
+                            print(f"⚠️ 无法获取 thread_id，跳过 DB 存储")
+                            
+                    except Exception as db_e:
+                        print(f"❌ 图片入库失败: {db_e}")
+
+                    # 无论是否入库成功，都存一份到内存 Store，用于即时回显
+                    store = get_image_store()
+                    store.add({
+                        'data': b64_data,
+                        'mime_type': mime_type,
+                        'prompt': prompt[:50],
+                        'image_id': image_id
+                    })
+                    
+                    # 返回包含 image_id 的消息，便于精确匹配
+                    if image_id:
+                        return f"✅ 图片已成功生成！[IMAGE_ID:{image_id}]"
                     else:
-                        print(f"⚠️ 无法获取 thread_id，跳过 DB 存储")
-                        
-                except Exception as db_e:
-                    print(f"❌ 图片入库失败: {db_e}")
-
-                # 无论是否入库成功，都存一份到内存 Store，用于即时回显
-                store = get_image_store()
-                store.add({
-                    'data': b64_data,
-                    'mime_type': mime_type,
-                    'prompt': prompt[:50],
-                    'image_id': image_id  # 同时存储 ID
-                })
-                
-                # 返回包含 image_id 的消息，便于精确匹配
-                if image_id:
-                    return f"✅ 图片已成功生成！[IMAGE_ID:{image_id}]"
-                else:
-                    return f"✅ 图片已成功生成！（提示词：{prompt[:30]}...）"
+                        return f"✅ 图片已成功生成！（提示词：{prompt[:30]}...）"
+            
+            # 如果没有图片，返回文本响应
+            text_parts = [p.text for p in response.candidates[0].content.parts if hasattr(p, 'text') and p.text]
+            if text_parts:
+                return f"⚠️ 模型返回了文字而非图片：\n{''.join(text_parts)}"
             
             return "❌ 生成成功但未返回图片数据。"
             
@@ -95,7 +98,7 @@ def generate_illustration(prompt: str, config: RunnableConfig) -> str:
             error_msg = str(gemini_e)
             # 检测是否是计费问题
             if "billed" in error_msg.lower() or "billing" in error_msg.lower():
-                return "❌ **需要启用 Google Cloud 计费**\n\n您的 API 账户目前是免费层级。Imagen 图片生成功能需要在 Google AI Studio 或 Google Cloud 中启用计费。"
+                return "❌ **需要启用 Google Cloud 计费**\n\n您的 API 账户目前是免费层级。图片生成功能需要在 Google AI Studio 或 Google Cloud 中启用计费。"
             # 检测是否是安全策略问题
             if "safety" in error_msg.lower() or "blocked" in error_msg.lower():
                 return f"❌ 图片生成被安全策略阻止。请尝试更换描述内容。"

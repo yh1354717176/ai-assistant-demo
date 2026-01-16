@@ -380,7 +380,7 @@ def restore_history(thread_id):
         
         # 1. 获取文本历史
         if current_state and current_state.values and "messages" in current_state.values:
-            from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
+            from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage, AIMessage
             import re
             
             raw_msgs = current_state.values["messages"]
@@ -391,10 +391,22 @@ def restore_history(thread_id):
             image_by_id = {img["id"]: img for img in db_images if "id" in img}
             
             temp_msgs = []
+            pending_images = []  # 从 ToolMessage 提取的待附加图片
             
             for msg in raw_msgs:
-                if isinstance(msg, SystemMessage): continue
-                if isinstance(msg, ToolMessage): continue
+                if isinstance(msg, SystemMessage): 
+                    continue
+                
+                # 处理 ToolMessage：提取 IMAGE_ID
+                if isinstance(msg, ToolMessage):
+                    content = str(msg.content)
+                    image_id_matches = re.findall(r'\[IMAGE_ID:(\d+)\]', content)
+                    for id_str in image_id_matches:
+                        img_id = int(id_str)
+                        if img_id in image_by_id:
+                            pending_images.append(image_by_id[img_id])
+                            print(f"📎 从 ToolMessage 提取图片 ID: {img_id}")
+                    continue  # 不显示 ToolMessage 本身
                 
                 role = "user" if isinstance(msg, HumanMessage) else "assistant"
                 content = msg.content
@@ -408,7 +420,7 @@ def restore_history(thread_id):
                 if role == "assistant" and not content_str.strip():
                     continue
                 
-                # 精确匹配：从消息内容中提取 IMAGE_ID
+                # 也尝试从 AI 消息中提取 IMAGE_ID（某些情况下 AI 会复述）
                 images = []
                 if role == "assistant":
                     image_id_matches = re.findall(r'\[IMAGE_ID:(\d+)\]', content_str)
@@ -416,8 +428,12 @@ def restore_history(thread_id):
                         img_id = int(id_str)
                         if img_id in image_by_id:
                             images.append(image_by_id[img_id])
-                            # 从 text 中移除 ID 标记
                             content_str = re.sub(r'\[IMAGE_ID:\d+\]', '图片已生成。', content_str)
+                    
+                    # 附加从 ToolMessage 提取的待处理图片
+                    if pending_images:
+                        images.extend(pending_images)
+                        pending_images = []  # 清空
                 
                 msg_obj = {
                     "role": role,
@@ -428,7 +444,7 @@ def restore_history(thread_id):
 
             restored_msgs = temp_msgs
             st.session_state["messages"] = restored_msgs
-            print(f"✅ 成功恢复 {len(restored_msgs)} 条消息，{len(db_images)} 张图片 (通过 ID 精确匹配)")
+            print(f"✅ 成功恢复 {len(restored_msgs)} 条消息，{len(db_images)} 张图片")
 
     except Exception as e:
         print(f"Restore Error: {e}")
