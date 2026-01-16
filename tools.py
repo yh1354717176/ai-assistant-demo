@@ -11,7 +11,6 @@ from qdrant_client import QdrantClient
 from google.oauth2.credentials import Credentials
 
 from image_store import get_image_store
-import auth_service
 
 @tool
 def calculate_bonus(salary: int) -> str:
@@ -58,6 +57,7 @@ def generate_illustration(prompt: str) -> str:
                     # 如果不能，需要通过 config 传递 thread_id。
                     # 这里假设我们在 Streamlit 环境下同步执行。
                     try:
+                        import auth_service
                         thread_id = st.session_state.get("thread_id")
                         if thread_id:
                             auth_service.save_image_to_db(thread_id, prompt, b64_data, mime_type)

@@ -14,6 +14,7 @@ from image_store import get_image_store
 # ==========================================
 # 0. 初始化配置 & 数据库
 # ==========================================
+# Force reload trigger
 config.init_environment()
 st.set_page_config(page_title="幻影科技 AI 助手", page_icon="🤖", layout="wide")
 
