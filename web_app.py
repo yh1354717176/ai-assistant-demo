@@ -314,12 +314,13 @@ def show_chat_interface():
                     except:
                         pass
         
-        # 4. 存入历史
-        st.session_state["messages"].append({
-            "role": "assistant",
-            "content": final_response_text,
-            "images": final_images
-        })
+        # 4. 存入历史 (仅当有内容时)
+        if final_response_text.strip() or final_images:
+            st.session_state["messages"].append({
+                "role": "assistant",
+                "content": final_response_text,
+                "images": final_images
+            })
 
 def restore_history(thread_id):
     """从 LangGraph State 和 DB 恢复历史"""
@@ -365,6 +366,10 @@ def restore_history(thread_id):
                         attached_images.append(db_images[img_cursor])
                         img_cursor += 1
                 
+                if role == "assistant" and not str(content).strip() and not attached_images:
+                    # Skip empty assistant messages (often tool calls)
+                    continue
+
                 restored_msgs.append({
                     "role": role,
                     "content": str(content),
