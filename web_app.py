@@ -2,11 +2,10 @@ import streamlit as st
 import base64
 import datetime
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
-import extra_streamlit_components as stx
+from streamlit_cookies_manager import EncryptedCookieManager
 
 # 导入自定义模块
 import config
-# import auth_service  <-- Moved to inner scope
 import database
 from agent import get_graph
 from image_store import get_image_store
@@ -27,13 +26,20 @@ except Exception as e:
 # ==========================================
 # 1. Session State & Cookie 管理
 # ==========================================
-# 使用 extra_streamlit_components 的 CookieManager
-# 注意：CookieManager 是一个 widget，需要唯一的 key
-cookie_manager = stx.CookieManager(key="main_cookie_manager")
+# 使用 streamlit-cookies-manager 的 EncryptedCookieManager
+# 这里的 password 应该放在 secrets 里，这里为了演示使用固定值
+# prefix 避免与其他应用冲突
+cookies = EncryptedCookieManager(
+    prefix="ai_assistant_",
+    password="secure-cookie-password-change-me"
+)
+
+if not cookies.ready():
+    # 等待 Cookie 组件加载，Streamlit 会自动暂停后续脚本执行直到加载完成
+    st.stop()
 
 # ==========================================
 # Cookie 读取与登录状态恢复
-# 注意：CookieManager 首次加载时可能返回空，需要重试
 # ==========================================
 
 # 初始化用户状态变量
@@ -41,60 +47,20 @@ if "user_id" not in st.session_state:
     st.session_state["user_id"] = None
     st.session_state["username"] = None
 
-# Cookie 重试计数器（每次刷新后会被重置为 0）
-if "_cookie_retry" not in st.session_state:
-    st.session_state["_cookie_retry"] = 0
-
 # 尝试从 Cookie 恢复登录状态
 if st.session_state["user_id"] is None:
-    retry_count = st.session_state["_cookie_retry"]
-    
     try:
-        # 获取所有 Cookie
-        cookies = cookie_manager.get_all()
-        print(f"🍪 Cookie 读取 (尝试 {retry_count}): {cookies}")
+        # 直接像字典一样读取
+        cookie_user_id = cookies.get("user_id")
+        cookie_username = cookies.get("username")
         
-        # 检查是否有有效数据
-        if cookies and isinstance(cookies, dict) and len(cookies) > 0:
-            # 尝试读取 JSON 格式的 login_info
-            login_info_str = cookies.get("login_info")
-            
-            if login_info_str:
-                try:
-                    import json
-                    login_info = json.loads(login_info_str)
-                    cookie_user_id = login_info.get("user_id")
-                    cookie_username = login_info.get("username")
-                    
-                    if cookie_user_id and cookie_username:
-                        st.session_state["user_id"] = int(cookie_user_id)
-                        st.session_state["username"] = cookie_username
-                        print(f"✅ 从 Cookie 恢复登录状态: {cookie_username}")
-                except (json.JSONDecodeError, ValueError, TypeError) as e:
-                    print(f"⚠️ Cookie 解析失败: {e}")
-            else:
-                # 兼容旧格式：直接读取 user_id 和 username
-                cookie_user_id = cookies.get("user_id")
-                cookie_username = cookies.get("username")
-                if cookie_user_id and cookie_username:
-                    try:
-                        st.session_state["user_id"] = int(cookie_user_id)
-                        st.session_state["username"] = cookie_username
-                        print(f"✅ 从旧格式 Cookie 恢复登录状态: {cookie_username}")
-                    except (ValueError, TypeError) as e:
-                        print(f"⚠️ Cookie 值无效: {e}")
-        else:
-            # Cookie 还没准备好
-            MAX_RETRIES = 3
-            if retry_count < MAX_RETRIES:
-                st.session_state["_cookie_retry"] = retry_count + 1
-                wait_time = 0.3 * (retry_count + 1)  # 0.3s, 0.6s, 0.9s
-                print(f"⏳ Cookie 未就绪，等待 {wait_time}s 后重试 ({retry_count + 1}/{MAX_RETRIES})...")
-                import time
-                time.sleep(wait_time)
-                st.rerun()
-            else:
-                print("⚠️ Cookie 读取超时，显示登录页面")
+        # 调试输出
+        print(f"🍪 Cookie 读取: uid={cookie_user_id}, user={cookie_username}")
+        
+        if cookie_user_id and cookie_username:
+            st.session_state["user_id"] = int(cookie_user_id)
+            st.session_state["username"] = cookie_username
+            print(f"✅ 从 Cookie 恢复登录状态: {cookie_username}")
                     
     except Exception as e:
         print(f"⚠️ Cookie 读取异常: {e}")
@@ -109,7 +75,7 @@ if "thread_id" not in st.session_state:
 
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
-
+    
 if "tool_calls" not in st.session_state:
     st.session_state["tool_calls"] = []
 
@@ -146,15 +112,13 @@ def login_page():
                     if uid:
                         st.session_state["user_id"] = uid
                         st.session_state["username"] = username
-                        # 设置 Cookie (有效期 7 天) - 合并为一个 JSON Cookie 避免重复 key
-                        import datetime as dt
-                        import json
-                        expires = dt.datetime.now() + dt.timedelta(days=7)
-                        # 使用一个 Cookie 存储所有登录信息
-                        login_data = json.dumps({"user_id": uid, "username": username})
-                        cookie_manager.set("login_info", login_data, expires_at=expires)
+                        # 设置 Cookie
+                        cookies["user_id"] = str(uid)
+                        cookies["username"] = username
+                        cookies.save() # 必须调用 save()
+                        
                         st.success(f"{msg}，正在跳转...")
-                        # 等待 Cookie 写入后再刷新
+                        # 稍微等待确保 save() 完成
                         import time
                         time.sleep(0.5)
                         st.rerun()
@@ -191,12 +155,9 @@ def show_chat_interface():
             st.session_state["thread_id"] = None
             st.session_state["messages"] = []
             # 清除 Cookies
-            cookie_manager.delete("login_info")
-            # 兼容旧 Cookie 清除
-            cookie_manager.delete("user_id")
-            cookie_manager.delete("username")
-            import time
-            time.sleep(0.2)
+            del cookies["user_id"]
+            del cookies["username"]
+            cookies.save()
             st.rerun()
         
         st.divider()
