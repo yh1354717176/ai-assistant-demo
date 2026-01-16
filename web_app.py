@@ -209,7 +209,7 @@ def show_chat_interface():
     if user_input := st.chat_input("请输入问题..."):
         # 1. UI 立即显示
         st.chat_message("user").write(user_input)
-        if st.session_state["uploaded_image"]:
+        if st.session_state.get("uploaded_image"):
             st.chat_message("user").image(st.session_state["uploaded_image"], width=300)
         
         st.session_state["messages"].append({"role": "user", "content": user_input})
@@ -217,53 +217,68 @@ def show_chat_interface():
         # 2. 调用 Agent
         config_dict = {"configurable": {"thread_id": current_thread_id}}
         
-        # 初始化变量，防止 UnboundLocalError
-        ai_text = "⚠️由于未知错误，未能获取回复。"
-        new_images = []
+        # 预先初始化结果变量
+        final_response_text = "⚠️ 暂时无法获取回复，请稍后再试。"
+        final_images = []
         
-        with st.spinner("思考中..."):
-            # 构建输入
-            message_content = [{"type": "text", "text": user_input}]
-            if st.session_state["uploaded_image"]:
-                img_bytes = st.session_state["uploaded_image"].getvalue()
-                b64_img = base64.b64encode(img_bytes).decode("utf-8")
-                message_content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{st.session_state['uploaded_image'].type};base64,{b64_img}"}
-                })
-            
-            # Invoke
-            response = graph.invoke({"messages": [HumanMessage(content=message_content)]}, config=config_dict)
-            st.session_state["uploaded_image"] = None # Clear upload
+        try:
+            with st.spinner("思考中..."):
+                # 构建输入
+                message_content = [{"type": "text", "text": user_input}]
+                
+                # 处理图片
+                if st.session_state.get("uploaded_image"):
+                    try:
+                        img_bytes = st.session_state["uploaded_image"].getvalue()
+                        b64_img = base64.b64encode(img_bytes).decode("utf-8")
+                        message_content.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{st.session_state['uploaded_image'].type};base64,{b64_img}"}
+                        })
+                    except Exception as e:
+                        print(f"Error processing upload: {e}")
+                
+                # Invoke Graph
+                response = graph.invoke({"messages": [HumanMessage(content=message_content)]}, config=config_dict)
+                st.session_state["uploaded_image"] = None # Clear upload after sending
 
-            # 解析结果
-            ai_msg = response["messages"][-1]
-            ai_text = ai_msg.content
-            if isinstance(ai_text, list): # Handle multipart
-                texts = [p if isinstance(p, str) else p.get("text", "") for p in ai_text]
-                ai_text = "\n".join(texts)
-            
-            # 从内存 store 拿（保证实时性）
-            current_generated_imgs = image_store.get_and_clear()
-            if current_generated_imgs:
-                new_images = current_generated_imgs
+                # 解析结果
+                if response and "messages" in response:
+                    ai_msg = response["messages"][-1]
+                    content = ai_msg.content
+                    # Handle list content (common in multimodal models)
+                    if isinstance(content, list):
+                        texts = [p if isinstance(p, str) else p.get("text", "") for p in content]
+                        final_response_text = "\n".join(texts)
+                    else:
+                        final_response_text = str(content)
+                
+                # 尝试获取新生成的图片
+                current_generated_imgs = image_store.get_and_clear()
+                if current_generated_imgs:
+                    final_images = current_generated_imgs
+                    
+        except Exception as e:
+            final_response_text = f"❌ 系统错误: {str(e)}"
+            print(f"Agent Invoke Error: {e}")
 
-    # 3. 渲染回复
-    with st.chat_message("assistant"):
-        st.markdown(ai_text)
-        if new_images:
-            for img in new_images:
-                try:
-                    data = base64.b64decode(img['data'])
-                    st.image(data, caption=img.get('prompt'), use_container_width=True)
-                except:
-                    pass
-    
-    st.session_state["messages"].append({
-        "role": "assistant",
-        "content": ai_text,
-        "images": new_images
-    })
+        # 3. 渲染回复 (无论成功与否)
+        with st.chat_message("assistant"):
+            st.markdown(final_response_text)
+            if final_images:
+                for img in final_images:
+                    try:
+                        data = base64.b64decode(img['data'])
+                        st.image(data, caption=img.get('prompt'), use_container_width=True)
+                    except:
+                        pass
+        
+        # 4. 存入历史
+        st.session_state["messages"].append({
+            "role": "assistant",
+            "content": final_response_text,
+            "images": final_images
+        })
 
 def restore_history(thread_id):
     """从 LangGraph State 和 DB 恢复历史"""
