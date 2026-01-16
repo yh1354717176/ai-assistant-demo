@@ -155,6 +155,9 @@ def get_graph(_version="v5.6"):  # 修改版本号强制刷新缓存
                             'prompt': prompt[:50]
                         })
                         
+                        # 🔍 调试：打印确认信息
+                        print(f"✅ 图片已存储到 session_state，当前共 {len(st.session_state['generated_images'])} 张图片")
+                        
                         # 只返回简短消息给 LLM，避免 token 溢出
                         return f"✅ 图片已成功生成！（提示词：{prompt[:30]}...）图片将自动显示在对话中。"
                 
@@ -423,6 +426,11 @@ if user_input := st.chat_input("请输入问题（例如：公司吉祥物叫什
         st.markdown(ai_content)
         
         # 🖼️ 显示生成的图片（如果有的话）
+        # 🔍 调试：检查 session_state 中的图片
+        print(f"🔍 检查图片: 'generated_images' in session_state = {'generated_images' in st.session_state}")
+        if "generated_images" in st.session_state:
+            print(f"🔍 图片数量: {len(st.session_state['generated_images'])}")
+        
         if "generated_images" in st.session_state and st.session_state["generated_images"]:
             st.divider()
             st.caption("🎨 生成的图片：")
