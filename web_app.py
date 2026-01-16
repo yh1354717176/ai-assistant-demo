@@ -131,8 +131,9 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
             # Gemini 2.5 Flash Image 使用 generate_content 而不是 generate_images
             # 需要配置响应模态为 IMAGE
             try:
+                # 使用用户账户中可用的模型 ID
                 response = client.models.generate_content(
-                    model='gemini-2.0-flash-preview-image-generation',
+                    model='gemini-2.0-flash-exp-image-generation',  # 正确的模型ID，不是 preview 而是 exp
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         response_modalities=['IMAGE']
@@ -150,10 +151,10 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
                 return "❌ 生成成功但未返回图片数据。"
                 
             except Exception as gemini_e:
-                # 如果 Gemini 失败，尝试 Imagen 作为后备
+                # 如果 Gemini 失败，尝试 Imagen 4.0 作为后备（用户账户中可用的版本）
                 try:
                     response = client.models.generate_images(
-                        model='imagen-3.0-generate-001',
+                        model='imagen-4.0-generate-001',  # 更新为用户账户中可用的 Imagen 4.0
                         prompt=prompt,
                         config=types.GenerateImagesConfig(
                             number_of_images=1,
