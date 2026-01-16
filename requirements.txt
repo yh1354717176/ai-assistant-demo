@@ -32,3 +32,6 @@ google-auth-oauthlib
 
 # 环境变量管理
 python-dotenv
+
+# 安全认证
+bcrypt

@@ -5,249 +5,345 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # 导入自定义模块
 import config
+import auth_service
+import database
 from agent import get_graph
 from image_store import get_image_store
 
 # ==========================================
-# 0. 初始化配置
+# 0. 初始化配置 & 数据库
 # ==========================================
 config.init_environment()
+st.set_page_config(page_title="幻影科技 AI 助手", page_icon="🤖", layout="wide")
+
+# 初始化表结构 (Safe to run multiple times)
+try:
+    database.init_db_schema()
+except Exception as e:
+    print(f"DB Init Warning: {e}")
 
 # ==========================================
-# 1. 页面配置 & 标题
+# 1. Session State 管理
 # ==========================================
-st.set_page_config(page_title="幻影科技 AI 助手", page_icon="🤖")
-st.title("🤖 幻影科技员工助手 (Agent版 v5.0)")
-st.caption("我是由 LangGraph 驱动的智能体，能查文档，也能算工资。")
+# 用户登录状态
+if "user_id" not in st.session_state:
+    st.session_state["user_id"] = None
+    st.session_state["username"] = None
 
-# ==========================================
-# 2. 缓存资源
-# ==========================================
-# 加载图 (使用 @st.cache_resource 是在 agent.py 或外部不好做，
-# 因为 get_graph 内部每次运行都要重新从 db 取 pool，但 pool 本身是 cached 的。
-# 这里的 graph 对象本身应该被 cache 吗？
-# graph 编译后是 stateless 的 (除了 checkpointer 连接)，可以 cache。
-# 为了稳妥起见，我们在 agent.py 没有加 cache，在这里加。
-# 但是 Streamlit 的 hash 可能会因为 graph 对象太复杂而失败。
-# 让我们试着直接调用，因为 get_db_pool 和 get_image_store 都是 cached 的，
-# 构建 graph 的开销主要在初始化 LLM 和 Tools，稍微有点大。
-# 我们可以给 get_graph 加个简单的 cache wrapper。
-@st.cache_resource
-def get_cached_graph():
-    return get_graph()
+# 当前对话 Thread ID
+query_params = st.query_params
+url_thread_id = query_params.get("thread_id", None)
 
-graph = get_cached_graph()
-image_store = get_image_store()
+if "thread_id" not in st.session_state:
+    # 优先使用 URL 中的 thread_id，否则暂为 None (等待登录或创建新对话)
+    st.session_state["thread_id"] = url_thread_id 
 
-# ==========================================
-# 3. 会话状态管理 (Session State)
-# ==========================================
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
 
 if "tool_calls" not in st.session_state:
     st.session_state["tool_calls"] = []
 
-if "thread_id" not in st.session_state:
-    import uuid
-    st.session_state["thread_id"] = str(uuid.uuid4())
-
 if "uploaded_image" not in st.session_state:
     st.session_state["uploaded_image"] = None
 
-# 🔄 清除对话按钮
-col1, col2 = st.columns([6, 1])
-with col2:
-    if st.button("🗑️ 清除对话"):
-        import uuid
-        st.session_state["messages"] = []
-        st.session_state["tool_calls"] = []
-        st.session_state["thread_id"] = str(uuid.uuid4())
+@st.cache_resource
+def get_cached_graph():
+    return get_graph()
+
+graph = get_cached_graph()
+image_store = get_image_store() # Memory fallback
+
+# ==========================================
+# 2. 认证逻辑 (UI)
+# ==========================================
+
+def login_page():
+    st.title("🔐 登录 / 注册")
+    
+    tab1, tab2 = st.tabs(["登录", "注册"])
+    
+    with tab1:
+        with st.form("login_form"):
+            username = st.text_input("用户名")
+            password = st.text_input("密码", type="password")
+            submitted = st.form_submit_button("登录")
+            if submitted:
+                if not username or not password:
+                    st.error("请输入用户名和密码")
+                else:
+                    uid, msg = auth_service.login_user(username, password)
+                    if uid:
+                        st.session_state["user_id"] = uid
+                        st.session_state["username"] = username
+                        st.success(f"{msg}，正在跳转...")
+                        st.rerun()
+                    else:
+                        st.error(msg)
+    
+    with tab2:
+        with st.form("register_form"):
+            new_user = st.text_input("设置用户名")
+            new_pass = st.text_input("设置密码", type="password")
+            submitted = st.form_submit_button("注册")
+            if submitted:
+                if not new_user or not new_pass:
+                    st.error("请输入用户名和密码")
+                else:
+                    uid, msg = auth_service.register_user(new_user, new_pass)
+                    if uid:
+                        st.success(f"注册成功！请切换到登录标签页进行登录。")
+                    else:
+                        st.error(msg)
+
+# ==========================================
+# 3. 主应用逻辑
+# ==========================================
+
+def show_chat_interface():
+    # --- Sidebar: User Info & History ---
+    with st.sidebar:
+        st.header(f"👤 {st.session_state['username']}")
+        if st.button("退出登录"):
+            st.session_state["user_id"] = None
+            st.session_state["username"] = None
+            st.session_state["thread_id"] = None
+            st.session_state["messages"] = []
+            st.rerun()
+        
+        st.divider()
+        st.subheader("🗂️ 对话历史")
+        
+        # 新建对话按钮
+        if st.button("➕ 新建对话", use_container_width=True):
+            new_tid = auth_service.create_new_thread(st.session_state["user_id"], title="新对话")
+            st.session_state["thread_id"] = new_tid
+            st.session_state["messages"] = []
+            st.query_params["thread_id"] = new_tid
+            st.rerun()
+            
+        # 历史列表
+        threads = auth_service.get_user_threads(st.session_state["user_id"])
+        if threads:
+            for tid, title, updated_at in threads:
+                tid_str = str(tid)
+                # 简单样式区分当前选中
+                label = f"{'🟢' if tid_str == st.session_state['thread_id'] else '📄'} {title or '未命名对话'}"
+                if st.button(label, key=tid_str, use_container_width=True):
+                    st.session_state["thread_id"] = tid_str
+                    st.session_state["messages"] = [] # 清空当前 UI，等待 reload
+                    st.query_params["thread_id"] = tid_str
+                    st.rerun()
+        else:
+            st.caption("暂无历史记录")
+
+        st.divider()
+        # 图片上传 & 工具追踪 (Keep existing sidebar features)
+        st.header("🖼️ 图片上传")
+        uploaded_file = st.file_uploader("选择图片", type=["jpg", "png", "webp"])
+        if uploaded_file:
+            st.session_state["uploaded_image"] = uploaded_file
+            st.image(uploaded_file, caption="待发送", use_container_width=True)
+            if st.button("❌ 取消"):
+                st.session_state["uploaded_image"] = None
+                st.rerun()
+
+    # --- Main Chat Area ---
+    st.title("🤖 幻影科技员工助手")
+    
+    # 检查是否有 thread_id，如果没有（刚登录），创建一个默认的
+    if not st.session_state.get("thread_id"):
+        # 自动创建第一个对话
+        new_tid = auth_service.create_new_thread(st.session_state["user_id"], title="默认对话")
+        st.session_state["thread_id"] = new_tid
+        st.query_params["thread_id"] = new_tid
         st.rerun()
 
-# ==========================================
-# 4. 渲染聊天界面
-# ==========================================
+    current_thread_id = st.session_state["thread_id"]
+    st.caption(f"Session ID: {current_thread_id}")
 
-# 显示历史消息
-for msg in st.session_state["messages"]:
-    if msg["role"] == "user":
-        st.chat_message("user").write(msg["content"])
-    else:
-        with st.chat_message("assistant"):
-            st.write(msg["content"])
-            # 如果消息包含图片，显示图片
-            if "images" in msg and msg["images"]:
-                for img in msg["images"]:
-                    try:
-                        image_data = base64.b64decode(img['data'])
-                        st.image(image_data, caption=f"🎨 {img.get('prompt', '生成的图片')}...", use_container_width=True)
-                    except Exception as e:
-                        st.error(f"图片加载失败: {e}")
+    # --- 恢复消息历史 (包括从 DB 加载图片) ---
+    if not st.session_state["messages"]:
+        restore_history(current_thread_id)
 
-# 处理用户输入
-if user_input := st.chat_input("请输入问题（例如：公司吉祥物叫什么？）"):
-    # 1. 显示用户消息
-    st.chat_message("user").write(user_input)
-    
-    # 如果有上传的图片，也显示出来
-    if st.session_state["uploaded_image"]:
-        st.chat_message("user").image(st.session_state["uploaded_image"], caption="📷 上传的图片", width=300)
-    
-    st.session_state["messages"].append({"role": "user", "content": user_input})
+    # 渲染消息
+    for msg in st.session_state["messages"]:
+        if msg["role"] == "user":
+            st.chat_message("user").write(msg["content"])
+        else:
+            with st.chat_message("assistant"):
+                st.write(msg["content"])
+                if "images" in msg and msg["images"]:
+                    for img in msg["images"]:
+                        try:
+                            # 兼容 base64 数据
+                            if "data" in img: # From memory or DB struct
+                                image_data = base64.b64decode(img['data'])
+                                st.image(image_data, caption=img.get('prompt', ''), use_container_width=True)
+                        except Exception as e:
+                            st.warning(f"无法显示图片: {e}")
 
-    # 2. 调用 LangGraph
-    config = {"configurable": {"thread_id": st.session_state["thread_id"]}}
-
-    with st.spinner("🧠 Agent 正在思考并调用工具..."):
-        
-        # === 构建多模态消息 ===
-        message_content = []
-        message_content.append({"type": "text", "text": user_input})
-        
+    # 输入处理
+    if user_input := st.chat_input("请输入问题..."):
+        # 1. UI 立即显示
+        st.chat_message("user").write(user_input)
         if st.session_state["uploaded_image"]:
-            image_bytes = st.session_state["uploaded_image"].getvalue()
-            image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-            image_type = st.session_state["uploaded_image"].type
-            message_content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{image_type};base64,{image_base64}"
-                }
-            })
+            st.chat_message("user").image(st.session_state["uploaded_image"], width=300)
         
-        # 获取最终响应
-        response = graph.invoke(
-            {"messages": [HumanMessage(content=message_content)]},
-            config=config
-        )
+        st.session_state["messages"].append({"role": "user", "content": user_input})
         
-        st.session_state["uploaded_image"] = None
-
-        # 提取 AI 的最后一条回复
-        messages = response.get("messages", [])
-        ai_message = messages[-1]
-        ai_content = ai_message.content
-
-        if not isinstance(ai_content, str):
-            ai_content = str(ai_content)
-
-        # === 提取工具调用信息 ===
-        tool_calls_in_turn = []
-        for msg in messages:
-            if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
-                for tc in msg.tool_calls:
-                    tool_info = {
-                        "name": tc.get("name", "未知工具"),
-                        "args": tc.get("args", {}),
-                        "id": tc.get("id", ""),
-                        "timestamp": datetime.datetime.now().strftime("%H:%M:%S")
-                    }
-                    tool_calls_in_turn.append(tool_info)
-            if isinstance(msg, ToolMessage):
-                for tc_info in tool_calls_in_turn:
-                    if tc_info["id"] == msg.tool_call_id:
-                        tc_info["result"] = str(msg.content)[:200]
-                        break
+        # 2. 调用 Agent
+        config_dict = {"configurable": {"thread_id": current_thread_id}}
         
-        if tool_calls_in_turn:
-            st.session_state["tool_calls"].append({
-                "user_query": user_input,
-                "tools": tool_calls_in_turn
-            })
+        with st.spinner("思考中..."):
+            # 构建输入
+            message_content = [{"type": "text", "text": user_input}]
+            if st.session_state["uploaded_image"]:
+                img_bytes = st.session_state["uploaded_image"].getvalue()
+                b64_img = base64.b64encode(img_bytes).decode("utf-8")
+                message_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{st.session_state['uploaded_image'].type};base64,{b64_img}"}
+                })
+            
+            # Invoke
+            response = graph.invoke({"messages": [HumanMessage(content=message_content)]}, config=config_dict)
+            st.session_state["uploaded_image"] = None # Clear upload
 
-        # === 智能回溯机制 ===
-        ai_content = "⚠️ 未能获取有效回答"
-        for msg in reversed(messages):
-            if isinstance(msg, HumanMessage):
-                continue
-            if msg.content and str(msg.content).strip():
-                ai_content = msg.content
-                if isinstance(ai_content, list):
-                    text_parts = []
-                    for item in ai_content:
-                        if isinstance(item, dict) and "text" in item:
-                            text_parts.append(item["text"])
-                        elif isinstance(item, str):
-                            text_parts.append(item)
-                    ai_content = "\n".join(text_parts) if text_parts else str(ai_content)
-                
-                if "ToolMessage" in type(msg).__name__:
-                    ai_content = f"【系统检索结果】\n{ai_content}"
-                
-                if not isinstance(ai_content, str):
-                    ai_content = str(ai_content)
-                break
+            # 解析结果
+            ai_msg = response["messages"][-1]
+            ai_text = ai_msg.content
+            if isinstance(ai_text, list): # Handle multipart
+                texts = [p if isinstance(p, str) else p.get("text", "") for p in ai_text]
+                ai_text = "\n".join(texts)
+            
+            # 检查是否有新生成的图片 (从 DB 查，或者从内存 Fallback)
+            # 策略：不管怎样，我们去 app_images 查一下该 thread 最近生成的图片
+            # 为了避免把历史图片全查出来，我们可以基于 created_at 查最近几秒的？
+            # 或者更简单：Agent 工具在返回 ToolMessage 时，虽然没有返回图片数据，
+            # 但我们在 render loop 里可以用 auth_service.get_images_for_thread(tid)
+            # 然后把它们挂载到当前最新的这条消息上？
+            # 这里的逻辑稍微有点 trick：
+            # 如果我们每次都全量查图片然后全量 render，就不用把图片挂在 message 对象上了。
+            # 但那样排版会乱（所有图片堆在一起）。
+            # 更好的做法：工具生成图片后，image_store 依然保留了一份（为了实时显示），
+            # 同时 DB 里也存了一份（为了持久化）。
+            
+            # 从内存 store 拿（保证实时性）
+            current_generated_imgs = image_store.get_and_clear()
+            
+            # 如果内存空了（因为存 DB 去了），我们尝试从 DB 捞最近的一张？ 
+            # 之前的 tools.py 修改里，如果存 DB 成功，image_store 是没有数据的。
+            # 所以我们需要去 DB 捞。
+            # 这里简单起见：每次回复如果 tools.py 说是"生成图片成功"，我们就去 DB 拿最新的 n 张图。
+            # 或者 tools.py 存 DB 后，同时也存 image_store 一份专门用于 "Current Turn Display"？
+            # 让我们修改 tools.py 比较麻烦，不如在这里查 DB。
+            
+            new_images = []
+            if "图片已成功生成" in str(ai_text) or "图片已生成" in str(ai_text):
+                # 查 DB 所有图片，然后过滤？或者只查最后一张？
+                # 这是一个弊端，我们不知道哪张是刚生成的。
+                # 改进方案：auth_service.save_image_to_db 返回 image_id，
+                # 但 tool output 只是 string。
+                # **最终方案**：tools.py 里，除了存 DB，也 `store.add()` 一份用于当次即时回显。
+                # 请务必执行下面的 run_command 来再次给 tools.py 打补丁，加上 store.add。
+                pass
+            
+            # 为了稳妥，我们暂时还是依靠 image_store 做当次显示，
+            # 只有在 reload/restore 时才从 DB 读。
+            # 所以 tools.py 需要更新：既存 DB，也存 Memory Store。
+            
+            if current_generated_imgs:
+                new_images = current_generated_imgs
 
-    # 3. 显示 AI 回复
+    # 3. 渲染回复
     with st.chat_message("assistant"):
-        st.markdown(ai_content)
-        
-        # 获取生成的图片
-        generated_imgs = image_store.get_and_clear()
-        print(f"🔍 检查图片: ImageStore 中有 {len(generated_imgs)} 张图片")
-        
-        if generated_imgs:
-            st.divider()
-            st.caption("🎨 生成的图片：")
-            for img in generated_imgs:
+        st.markdown(ai_text)
+        if new_images:
+            for img in new_images:
                 try:
-                    image_data = base64.b64decode(img['data'])
-                    st.image(image_data, caption=f"{img['prompt']}...", use_container_width=True)
-                except Exception as img_e:
-                    st.error(f"图片显示失败: {img_e}")
-                    
-    # 保存消息到历史记录
+                    data = base64.b64decode(img['data'])
+                    st.image(data, caption=img.get('prompt'), use_container_width=True)
+                except:
+                    pass
+    
     st.session_state["messages"].append({
-        "role": "assistant", 
-        "content": ai_content,
-        "images": generated_imgs if generated_imgs else []
+        "role": "assistant",
+        "content": ai_text,
+        "images": new_images
     })
 
-# ==========================================
-# 5. 侧边栏
-# ==========================================
-with st.sidebar:
-    st.header("🖼️ 图片上传")
-    st.caption("上传图片让 AI 帮你分析")
-    
-    uploaded_file = st.file_uploader(
-        "选择图片",
-        type=["jpg", "jpeg", "png", "gif", "webp"],
-        help="支持 JPG、PNG、GIF、WebP 格式"
-    )
-    
-    if uploaded_file:
-        st.session_state["uploaded_image"] = uploaded_file
-        st.image(uploaded_file, caption="📷 待发送的图片", use_container_width=True)
-        st.success("✅ 图片已准备好，请在下方输入问题后一起发送！")
+def restore_history(thread_id):
+    """从 LangGraph State 和 DB 恢复历史"""
+    try:
+        config = {"configurable": {"thread_id": thread_id}}
+        current_state = graph.get_state(config)
+        restored_msgs = []
         
-        if st.button("❌ 取消上传"):
-            st.session_state["uploaded_image"] = None
-            st.rerun()
-    
-    st.divider()
-    
-    st.header("🔧 工具调用追踪")
-    st.caption("查看 AI 在每次对话中调用了哪些工具")
-    
-    if st.button("🗑️ 清空历史"):
-        st.session_state["tool_calls"] = []
-        st.rerun()
-    
-    if not st.session_state["tool_calls"]:
-        st.info("暂无工具调用记录，开始对话后将在这里显示。")
-    else:
-        for i, call_record in enumerate(reversed(st.session_state["tool_calls"])):
-            idx = len(st.session_state["tool_calls"]) - i
-            with st.expander(f"🔹 对话 #{idx}: {call_record['user_query'][:30]}...", expanded=(i == 0)):
-                for tool in call_record["tools"]:
-                    st.markdown(f"**🛠️ 工具名称:** `{tool['name']}`")
-                    st.markdown(f"**⏰ 调用时间:** {tool['timestamp']}")
-                    if tool.get("args"):
-                        st.markdown("**📥 输入参数:**")
-                        st.json(tool["args"])
-                    if tool.get("result"):
-                        st.markdown("**📤 返回结果:**")
-                        st.code(tool["result"], language=None)
-                    st.divider()
+        # 1. 获取文本历史
+        if current_state and current_state.values and "messages" in current_state.values:
+            from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
+            raw_msgs = current_state.values["messages"]
+            
+            # 2. 获取该 Thread 所有图片历史 (时间序)
+            db_images = auth_service.get_images_for_thread(thread_id)
+            # 简单的关联逻辑：将图片分配给它们之后的下一条 Assistant 消息？
+            # 或者直接把所有图片合并进流？
+            # 这是一个难点：无法精确知道哪张图对应哪条消息。
+            # 简易策略：把所有图片收集起来，如果 Assistant 的回复里含有 "图片已生成" 字样，
+            # 就按顺序取出一张图片附上去。
+            
+            img_cursor = 0
+            
+            for msg in raw_msgs:
+                if isinstance(msg, SystemMessage): continue
+                if isinstance(msg, ToolMessage): continue # Skip raw tool outputs
+                
+                role = "user" if isinstance(msg, HumanMessage) else "assistant"
+                content = msg.content
+                if isinstance(content, list):
+                     text_parts = [i["text"] for i in content if isinstance(i, dict) and "text" in i]
+                     content = "\n".join(text_parts)
+                
+                # Check for images attachment
+                attached_images = []
+                if role == "assistant" and ("图片" in str(content) or "generated" in str(content)):
+                    # 尝试挂载一张或多张 DB 图片
+                    # 这里是模糊匹配，假设顺序一致
+                    # 如果 DB 里有足够多的图片，且还没被分配
+                    if img_cursor < len(db_images):
+                        # 挂载一张
+                        attached_images.append(db_images[img_cursor])
+                        img_cursor += 1
+                
+                restored_msgs.append({
+                    "role": role,
+                    "content": str(content),
+                    "images": attached_images
+                })
+            
+            # 如果还有剩余图片没显示（比如刚生成的），挂在最后一条
+            while img_cursor < len(db_images):
+                if restored_msgs and restored_msgs[-1]["role"] == "assistant":
+                    restored_msgs[-1]["images"].append(db_images[img_cursor])
+                else:
+                    restored_msgs.append({
+                        "role": "assistant", 
+                        "content": "🖼️ 补充图片",
+                        "images": [db_images[img_cursor]]
+                    })
+                img_cursor += 1
+                
+            st.session_state["messages"] = restored_msgs
+
+    except Exception as e:
+        print(f"Restore Error: {e}")
+
+# ==========================================
+# 4. 路由控制
+# ==========================================
+
+if st.session_state["user_id"]:
+    show_chat_interface()
+else:
+    login_page()

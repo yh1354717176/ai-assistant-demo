@@ -11,6 +11,7 @@ from qdrant_client import QdrantClient
 from google.oauth2.credentials import Credentials
 
 from image_store import get_image_store
+import auth_service
 
 @tool
 def calculate_bonus(salary: int) -> str:
@@ -52,16 +53,28 @@ def generate_illustration(prompt: str) -> str:
                     mime_type = part.inline_data.mime_type or 'image/png'
                     b64_data = base64.b64encode(img_data).decode('utf-8')
                     
-                    # 存储图片到全局存储
+                    # 存储图片到数据库
+                    # 注意：工具执行时如果在 Streamlit 的 ScriptRunner 线程中，可以访问 session_state
+                    # 如果不能，需要通过 config 传递 thread_id。
+                    # 这里假设我们在 Streamlit 环境下同步执行。
+                    try:
+                        thread_id = st.session_state.get("thread_id")
+                        if thread_id:
+                            auth_service.save_image_to_db(thread_id, prompt, b64_data, mime_type)
+                            print(f"✅ 图片已存储到数据库 app_images (Thread: {thread_id})")
+                        else:
+                            print(f"⚠️ 无法获取 thread_id，跳过 DB 存储")
+                            
+                    except Exception as db_e:
+                        print(f"❌ 图片入库失败: {db_e}")
+
+                    # 无论是否入库成功，都存一份到内存 Store，用于即时回显
                     store = get_image_store()
                     store.add({
                         'data': b64_data,
                         'mime_type': mime_type,
                         'prompt': prompt[:50]
                     })
-                    
-                    # 🔍 调试：打印确认信息
-                    print(f"✅ 图片已存储到 ImageStore")
                     
                     # 只返回简短消息给 LLM，避免 token 溢出
                     return f"✅ 图片已成功生成！（提示词：{prompt[:30]}...）图片将自动显示在对话中。"
