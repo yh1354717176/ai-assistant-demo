@@ -56,16 +56,33 @@ if st.session_state["user_id"] is None:
         
         # 检查是否有有效数据
         if cookies and isinstance(cookies, dict) and len(cookies) > 0:
-            cookie_user_id = cookies.get("user_id")
-            cookie_username = cookies.get("username")
+            # 尝试读取 JSON 格式的 login_info
+            login_info_str = cookies.get("login_info")
             
-            if cookie_user_id and cookie_username:
+            if login_info_str:
                 try:
-                    st.session_state["user_id"] = int(cookie_user_id)
-                    st.session_state["username"] = cookie_username
-                    print(f"✅ 从 Cookie 恢复登录状态: {cookie_username}")
-                except (ValueError, TypeError) as e:
-                    print(f"⚠️ Cookie 值无效: {e}")
+                    import json
+                    login_info = json.loads(login_info_str)
+                    cookie_user_id = login_info.get("user_id")
+                    cookie_username = login_info.get("username")
+                    
+                    if cookie_user_id and cookie_username:
+                        st.session_state["user_id"] = int(cookie_user_id)
+                        st.session_state["username"] = cookie_username
+                        print(f"✅ 从 Cookie 恢复登录状态: {cookie_username}")
+                except (json.JSONDecodeError, ValueError, TypeError) as e:
+                    print(f"⚠️ Cookie 解析失败: {e}")
+            else:
+                # 兼容旧格式：直接读取 user_id 和 username
+                cookie_user_id = cookies.get("user_id")
+                cookie_username = cookies.get("username")
+                if cookie_user_id and cookie_username:
+                    try:
+                        st.session_state["user_id"] = int(cookie_user_id)
+                        st.session_state["username"] = cookie_username
+                        print(f"✅ 从旧格式 Cookie 恢复登录状态: {cookie_username}")
+                    except (ValueError, TypeError) as e:
+                        print(f"⚠️ Cookie 值无效: {e}")
         else:
             # Cookie 还没准备好
             MAX_RETRIES = 3
@@ -129,11 +146,13 @@ def login_page():
                     if uid:
                         st.session_state["user_id"] = uid
                         st.session_state["username"] = username
-                        # 设置 Cookie (有效期 7 天)
+                        # 设置 Cookie (有效期 7 天) - 合并为一个 JSON Cookie 避免重复 key
                         import datetime as dt
+                        import json
                         expires = dt.datetime.now() + dt.timedelta(days=7)
-                        cookie_manager.set("user_id", str(uid), expires_at=expires)
-                        cookie_manager.set("username", username, expires_at=expires)
+                        # 使用一个 Cookie 存储所有登录信息
+                        login_data = json.dumps({"user_id": uid, "username": username})
+                        cookie_manager.set("login_info", login_data, expires_at=expires)
                         st.success(f"{msg}，正在跳转...")
                         # 等待 Cookie 写入后再刷新
                         import time
@@ -172,8 +191,12 @@ def show_chat_interface():
             st.session_state["thread_id"] = None
             st.session_state["messages"] = []
             # 清除 Cookies
+            cookie_manager.delete("login_info")
+            # 兼容旧 Cookie 清除
             cookie_manager.delete("user_id")
             cookie_manager.delete("username")
+            import time
+            time.sleep(0.2)
             st.rerun()
         
         st.divider()
