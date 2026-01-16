@@ -72,7 +72,7 @@ st.caption("我是由 LangGraph 驱动的智能体，能查文档，也能算工
 # 2. 缓存资源 (避免每次刷新都重连数据库)
 # ==========================================
 @st.cache_resource
-def get_graph(_version="v5.4"):  # 修改版本号强制刷新缓存
+def get_graph(_version="v5.5"):  # 修改版本号强制刷新缓存
     """初始化图结构，只执行一次"""
     print(f"🔄 正在初始化 LangGraph... (Cache Version: {_version})")
 
@@ -129,15 +129,13 @@ def get_graph(_version="v5.4"):  # 修改版本号强制刷新缓存
 
             client = genai.Client(api_key=api_key)
             
-            # Gemini 2.0 Flash Exp 图片生成
-            # 需要配置响应模态为 Text 和 Image（注意大小写！）
+            # Gemini 2.5 Flash Image 图片生成
             try:
-                # 使用用户账户中可用的模型 ID
                 response = client.models.generate_content(
                     model='gemini-2.5-flash-image',
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        response_modalities=['Text', 'Image']  # 修正：需要同时包含 Text 和 Image
+                        response_modalities=['Text', 'Image']
                     )
                 )
                 
@@ -147,7 +145,18 @@ def get_graph(_version="v5.4"):  # 修改版本号强制刷新缓存
                         img_data = part.inline_data.data
                         mime_type = part.inline_data.mime_type or 'image/png'
                         b64_data = base64.b64encode(img_data).decode('utf-8')
-                        return f"\n![Nano Banana 插图](data:{mime_type};base64,{b64_data})\n"
+                        
+                        # 🔑 关键：将图片存储到 session_state，而不是返回给 LLM
+                        if "generated_images" not in st.session_state:
+                            st.session_state["generated_images"] = []
+                        st.session_state["generated_images"].append({
+                            'data': b64_data,
+                            'mime_type': mime_type,
+                            'prompt': prompt[:50]
+                        })
+                        
+                        # 只返回简短消息给 LLM，避免 token 溢出
+                        return f"✅ 图片已成功生成！（提示词：{prompt[:30]}...）图片将自动显示在对话中。"
                 
                 # 如果没有图片，返回文本响应
                 text_parts = [p.text for p in response.candidates[0].content.parts if hasattr(p, 'text') and p.text]
@@ -161,31 +170,9 @@ def get_graph(_version="v5.4"):  # 修改版本号强制刷新缓存
                 
                 # 检测是否是计费问题
                 if "billed" in error_msg.lower() or "billing" in error_msg.lower():
-                    return "❌ **需要启用 Google Cloud 计费**\n\n您的 API 账户目前是免费层级。Gemini/Imagen 图片生成功能需要在 Google AI Studio 或 Google Cloud 中启用计费。\n\n请访问 https://aistudio.google.com 检查您的账户设置。"
+                    return "❌ **需要启用 Google Cloud 计费**\n\n您的 API 账户目前是免费层级。Gemini/Imagen 图片生成功能需要在 Google AI Studio 或 Google Cloud 中启用计费。"
                 
-                # 如果是模态不支持，尝试不同的配置
-                if "modalities" in error_msg.lower():
-                    try:
-                        # 尝试只用 image 小写
-                        response = client.models.generate_content(
-                            model='gemini-2.0-flash-exp-image-generation',
-                            contents=f"Generate an image: {prompt}",
-                            config=types.GenerateContentConfig(
-                                response_modalities=['image']
-                            )
-                        )
-                        
-                        for part in response.candidates[0].content.parts:
-                            if part.inline_data is not None:
-                                img_data = part.inline_data.data
-                                mime_type = part.inline_data.mime_type or 'image/png'
-                                b64_data = base64.b64encode(img_data).decode('utf-8')
-                                return f"\n![Nano Banana 插图](data:{mime_type};base64,{b64_data})\n"
-                                
-                    except Exception as retry_e:
-                        pass
-                
-                return f"❌ 图片生成失败: {gemini_e}\n\n💡 提示：图片生成功能可能需要您的 Google API 账户启用计费。请访问 https://aistudio.google.com 检查账户设置。"
+                return f"❌ 图片生成失败: {gemini_e}"
                 
         except Exception as e:
             return f"❌ 生成图片出错: {str(e)}"
@@ -433,6 +420,15 @@ if user_input := st.chat_input("请输入问题（例如：公司吉祥物叫什
     # 3. 显示 AI 回复
     with st.chat_message("assistant"):
         st.write(ai_content)
+        
+        # 🖼️ 显示生成的图片（如果有的话）
+        if "generated_images" in st.session_state and st.session_state["generated_images"]:
+            for img in st.session_state["generated_images"]:
+                import base64
+                image_data = base64.b64decode(img['data'])
+                st.image(image_data, caption=f"🎨 {img['prompt']}...", use_container_width=True)
+            # 清空已显示的图片，避免重复显示
+            st.session_state["generated_images"] = []
 
     st.session_state["messages"].append({"role": "assistant", "content": ai_content})
 
