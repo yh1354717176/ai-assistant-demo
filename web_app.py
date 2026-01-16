@@ -131,10 +131,7 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
             
             # 优先尝试的模型列表
             candidate_models = [
-                'imagen-4.0-generate-001',
-                'imagen-4.0-fast-generate-001', 
-                'gemini-2.5-flash-image',
-                'imagen-3.0-generate-001',
+                'gemini-2.0-flash-preview-image-generation',
             ]
             
             last_error = None
