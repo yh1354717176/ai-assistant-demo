@@ -10,6 +10,11 @@ streamlit
 langgraph
 langchain-community
 
+# Persistent Checkpoint (PostgreSQL)
+langgraph-checkpoint-postgres
+psycopg-pool
+psycopg[binary]
+
 # Google Gemini AI
 langchain-google-genai
 google-genai
@@ -27,5 +32,3 @@ google-auth-oauthlib
 
 # 环境变量管理
 python-dotenv
-
-
