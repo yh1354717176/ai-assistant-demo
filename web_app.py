@@ -114,7 +114,7 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
     @tool
     def generate_illustration(prompt: str) -> str:
         """当你需要根据用户的描述生成图片、绘画、或者设计草图时，使用这个工具。
-        输入应该是对画面内容的详细英文或中文描述。调用 Nano Banana (Imagen 3) API。"""
+        输入应该是对画面内容的详细英文或中文描述。调用 Nano Banana (Gemini 2.5 Flash Image) API。"""
         try:
             # 延迟导入
             from google import genai
@@ -126,24 +126,34 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
             if not api_key:
                 return "❌ 错误：未找到 GOOGLE_API_KEY，无法生成图片。"
 
-            # 恢复为默认 v1beta API，根据搜索结果 gemini-2.5-flash-image 可以在 v1beta 下工作
-            # 关键：Gemini 2.5 Flash Image 的 ID 是 `gemini-2.5-flash-image`，不要加 `models/` 前缀
-            # 如果使用 `models/` 前缀，会因为找不到 predict 方法而报 404
             client = genai.Client(api_key=api_key)
             
-            # 优先尝试的模型列表
-            candidate_models = [
-                'imagen-3.0-generate-001', # 这个是目前最稳定的
-                'gemini-2.5-flash-image',
-            ]
-            
-            last_error = None
-            
-            for model_name in candidate_models:
+            # Gemini 2.5 Flash Image 使用 generate_content 而不是 generate_images
+            # 需要配置响应模态为 IMAGE
+            try:
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash-image',
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_modalities=['IMAGE']
+                    )
+                )
+                
+                # 从响应中提取图片
+                for part in response.candidates[0].content.parts:
+                    if part.inline_data is not None:
+                        img_data = part.inline_data.data
+                        mime_type = part.inline_data.mime_type or 'image/png'
+                        b64_data = base64.b64encode(img_data).decode('utf-8')
+                        return f"\n![Nano Banana 插图](data:{mime_type};base64,{b64_data})\n"
+                
+                return "❌ 生成成功但未返回图片数据。"
+                
+            except Exception as gemini_e:
+                # 如果 Gemini 失败，尝试 Imagen 作为后备
                 try:
-                    # 使用 generate_images
                     response = client.models.generate_images(
-                        model=model_name,
+                        model='imagen-3.0-generate-001',
                         prompt=prompt,
                         config=types.GenerateImagesConfig(
                             number_of_images=1,
@@ -153,29 +163,12 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
                     if response.generated_images:
                         img_data = response.generated_images[0].image.image_bytes
                         b64_data = base64.b64encode(img_data).decode('utf-8')
-                        return f"\n![{model_name} 插图](data:image/png;base64,{b64_data})\n"
+                        return f"\n![Imagen 插图](data:image/png;base64,{b64_data})\n"
                         
-                except Exception as e:
-                    last_error = e
-                    # print(f"Model {model_name} failed: {e}") # Debug only
-                    continue # Try next model
-            
-            # If we get here, all models failed.
-            # List available models to help debug.
-            try:
-                available_models = []
-                for m in client.models.list():
-                    # explicitly checking if 'generateImages' is supported would be better
-                    # but simple listing is enough for user to check IDs.
-                    if "generate" in m.name or "image" in m.name:
-                         available_models.append(m.name)
+                except Exception as imagen_e:
+                    return f"❌ Gemini 图片生成失败: {gemini_e}\n\nImagen 后备也失败: {imagen_e}"
                 
-                # Take top 10 relevant
-                debug_list = ", ".join(available_models[:10])
-                error_msg = f"❌ 所有尝试的模型 ({candidate_models}) 都失败了。\n最后一次错误: {last_error}\n\n可用模型示例: {debug_list}"
-                return error_msg
-            except Exception as list_e:
-                return f"❌ 图片生成失败且无法获取模型列表。错误: {last_error}"
+                return f"❌ 图片生成失败: {gemini_e}"
                 
         except Exception as e:
             return f"❌ 生成图片出错: {str(e)}"
