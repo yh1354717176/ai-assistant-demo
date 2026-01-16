@@ -257,6 +257,14 @@ def show_chat_interface():
                 current_generated_imgs = image_store.get_and_clear()
                 if current_generated_imgs:
                     final_images = current_generated_imgs
+                else:
+                    # Fallback: 如果内存没拿到（可能 tools.py 直接存 DB 了但没存内存），去 DB 查最近的
+                    # 只有当回复里明确提到生成了图片时才查，避免误查
+                    if "图片" in str(final_response_text) or "generated" in str(final_response_text).lower():
+                        recent_db_imgs = auth_service.get_recent_images(current_thread_id, limit=2)
+                        if recent_db_imgs:
+                            final_images = recent_db_imgs
+                            print(f"✅ 从 DB 成功捞取 {len(final_images)} 张最近图片")
                     
         except Exception as e:
             final_response_text = f"❌ 系统错误: {str(e)}"

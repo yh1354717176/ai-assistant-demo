@@ -89,3 +89,22 @@ def get_images_for_thread(thread_id):
                 (thread_id,)
             )
             return [{"data": row[0], "prompt": row[1], "mime_type": row[2]} for row in cur.fetchall()]
+
+def get_recent_images(thread_id, limit=1):
+    """获取最近生成的图片（用于即时回显Fallback）"""
+    pool = get_db_pool()
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            # 获取最近30秒内生成的图片
+            cur.execute(
+                """
+                SELECT base64_data, prompt, mime_type 
+                FROM app_images 
+                WHERE thread_id = %s 
+                AND created_at > NOW() - INTERVAL '30 seconds'
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (thread_id, limit)
+            )
+            return [{"data": row[0], "prompt": row[1], "mime_type": row[2]} for row in cur.fetchall()]
