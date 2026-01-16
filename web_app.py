@@ -76,7 +76,7 @@ GENERATED_IMAGES = []
 # 2. 缓存资源 (避免每次刷新都重连数据库)
 # ==========================================
 @st.cache_resource
-def get_graph(_version="v5.7"):  # 修改版本号强制刷新缓存
+def get_graph(_version="v5.8"):  # 修改版本号强制刷新缓存
     """初始化图结构，只执行一次"""
     print(f"🔄 正在初始化 LangGraph... (Cache Version: {_version})")
 
@@ -120,6 +120,7 @@ def get_graph(_version="v5.7"):  # 修改版本号强制刷新缓存
     def generate_illustration(prompt: str) -> str:
         """当你需要根据用户的描述生成图片、绘画、或者设计草图时，使用这个工具。
         输入应该是对画面内容的详细英文或中文描述。调用 Nano Banana (Gemini 2.5 Flash Image) API。"""
+        global GENERATED_IMAGES  # 🔑 必须在函数开头声明
         try:
             # 延迟导入
             from google import genai
@@ -150,8 +151,7 @@ def get_graph(_version="v5.7"):  # 修改版本号强制刷新缓存
                         mime_type = part.inline_data.mime_type or 'image/png'
                         b64_data = base64.b64encode(img_data).decode('utf-8')
                         
-                        # 🔑 关键：使用全局变量存储图片（解决线程隔离问题）
-                        global GENERATED_IMAGES
+                        # 存储图片到全局变量
                         GENERATED_IMAGES.append({
                             'data': b64_data,
                             'mime_type': mime_type,
