@@ -2,7 +2,7 @@ import streamlit as st
 import base64
 import datetime
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
-from streamlit_cookies_controller import CookieController
+import extra_streamlit_components as stx
 
 # 导入自定义模块
 import config
@@ -27,15 +27,15 @@ except Exception as e:
 # ==========================================
 # 1. Session State & Cookie 管理
 # ==========================================
-# 初始化 Cookie 控制器
-# 注意：不要缓存 CookieController，每次都新建以确保获取最新 Cookie
-controller = CookieController()
+# 使用 extra_streamlit_components 的 CookieManager（更稳定）
+@st.cache_resource
+def get_cookie_manager():
+    return stx.CookieManager()
+
+cookie_manager = get_cookie_manager()
 
 # ==========================================
 # Cookie 读取与登录状态恢复
-# 
-# 问题：streamlit_cookies_controller 在首次加载时 getAll() 可能返回 None/{}
-# 解决：使用 st.cache_data 缓存读取结果，或使用计数器限制 rerun 次数
 # ==========================================
 
 # 初始化用户状态变量
@@ -43,18 +43,12 @@ if "user_id" not in st.session_state:
     st.session_state["user_id"] = None
     st.session_state["username"] = None
 
-# 初始化 Cookie 尝试计数器（防止无限 rerun）
-if "_cookie_retry_count" not in st.session_state:
-    st.session_state["_cookie_retry_count"] = 0
-
 # 尝试从 Cookie 恢复登录状态
 if st.session_state["user_id"] is None:
     try:
-        cookies = controller.getAll()
-        
-        # 调试输出
-        retry_count = st.session_state["_cookie_retry_count"]
-        print(f"🍪 Cookie 读取 (尝试 {retry_count}): {cookies}")
+        # extra_streamlit_components 的 get_all() 返回字典
+        cookies = cookie_manager.get_all()
+        print(f"🍪 Cookie 读取: {type(cookies)} - {cookies}")
         
         # 如果有有效的 cookies 数据，立即恢复
         if cookies and isinstance(cookies, dict):
@@ -68,13 +62,6 @@ if st.session_state["user_id"] is None:
                     print(f"✅ 从 Cookie 恢复登录状态: {cookie_username}")
                 except (ValueError, TypeError) as e:
                     print(f"⚠️ Cookie 值无效: {e}")
-        else:
-            # Cookie 还没准备好，最多尝试 2 次 rerun
-            if st.session_state["_cookie_retry_count"] < 2:
-                st.session_state["_cookie_retry_count"] += 1
-                import time
-                time.sleep(0.15)  # 短暂等待让 Cookie 组件加载
-                st.rerun()
                     
     except Exception as e:
         print(f"⚠️ Cookie 读取异常: {e}")
@@ -127,8 +114,10 @@ def login_page():
                         st.session_state["user_id"] = uid
                         st.session_state["username"] = username
                         # 设置 Cookie (有效期 7 天)
-                        controller.set("user_id", str(uid), max_age=604800)
-                        controller.set("username", username, max_age=604800)
+                        import datetime
+                        expires = datetime.datetime.now() + datetime.timedelta(days=7)
+                        cookie_manager.set("user_id", str(uid), expires_at=expires)
+                        cookie_manager.set("username", username, expires_at=expires)
                         st.success(f"{msg}，正在跳转...")
                         # 强制刷新以应用 Cookie
                         st.rerun()
@@ -165,8 +154,8 @@ def show_chat_interface():
             st.session_state["thread_id"] = None
             st.session_state["messages"] = []
             # 清除 Cookies
-            controller.remove("user_id")
-            controller.remove("username")
+            cookie_manager.delete("user_id")
+            cookie_manager.delete("username")
             st.rerun()
         
         st.divider()
@@ -372,21 +361,16 @@ def restore_history(thread_id):
             from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
             raw_msgs = current_state.values["messages"]
             
-            # 2. 获取该 Thread 所有图片历史 (时间序，包含 prompt)
+            # 2. 获取该 Thread 所有图片历史 (按创建时间升序)
             import auth_service
             db_images = auth_service.get_images_for_thread(thread_id)
             
-            # 改进的匹配策略：
-            # 使用图片的 prompt 来匹配最近的 User 请求
-            # 然后将图片附加到该 User 请求之后的 Assistant 回复上
+            # 图片生成成功的关键词（LLM 工具调用成功时会返回这些）
+            # 注意："好的，图片已生成" 是 LLM 自己说的，不一定真的生成了
+            # 真正成功的标志是 "✅ 图片已成功生成！" 或类似的工具返回
+            SUCCESS_KEYWORDS = ["✅", "成功生成", "已成功", "successfully"]
             
-            # 图片匹配关键词
-            IMAGE_KEYWORDS = [
-                "图片", "生成", "绘制", "画", "created", "generated", 
-                "illustration", "image", "✅", "成功"
-            ]
-            
-            # 第一遍：收集所有消息，记录 User 和 Assistant 消息的关系
+            # 收集所有消息
             temp_msgs = []
             for msg in raw_msgs:
                 if isinstance(msg, SystemMessage): continue
@@ -407,81 +391,42 @@ def restore_history(thread_id):
                     "images": []
                 })
             
-            # 第二遍：将图片匹配到正确的 Assistant 回复
-            # 逻辑：对于每张图片，根据 prompt 找到最匹配的 User 消息
-            # 然后将图片附加到紧随其后的 Assistant 消息上
+            # 简单顺序匹配：按时间顺序将图片分配给 Assistant 消息
+            # 关键改进：只有包含成功标志的 Assistant 消息才能获得图片
+            img_cursor = 0
             
-            used_images = set()  # 记录已分配的图片索引
+            for msg in temp_msgs:
+                if msg["role"] == "assistant" and img_cursor < len(db_images):
+                    content = msg["content"]
+                    
+                    # 检查是否包含成功标志（工具真正执行成功）
+                    has_success = any(kw in content for kw in SUCCESS_KEYWORDS)
+                    
+                    if has_success:
+                        # 分配一张图片
+                        msg["images"].append(db_images[img_cursor])
+                        img_cursor += 1
             
-            for img_idx, img in enumerate(db_images):
-                prompt = img.get("prompt", "") or ""
-                prompt_lower = prompt.lower()
-                
-                best_match_idx = -1
-                best_score = 0
-                
-                # 遍历消息，找到与 prompt 最匹配的 User 消息
-                for i, m in enumerate(temp_msgs):
-                    if m["role"] == "user":
-                        user_content = m["content"].lower()
-                        
-                        # 计算匹配分数：prompt 中的词在用户消息中出现的比例
-                        prompt_words = [w for w in prompt_lower.split() if len(w) > 1]
-                        if prompt_words:
-                            match_count = sum(1 for w in prompt_words if w in user_content)
-                            score = match_count / len(prompt_words)
-                        else:
-                            # 如果 prompt 为空或太短，使用简单的包含检查
-                            score = 0.1 if any(kw in user_content for kw in ["图", "画", "生成"]) else 0
-                        
-                        if score > best_score:
-                            best_score = score
-                            best_match_idx = i
-                
-                # 找到匹配的 User 消息后，将图片附加到紧随其后的 Assistant 消息
-                if best_match_idx >= 0:
-                    # 找到这个 User 消息之后的第一个 Assistant 消息
-                    for j in range(best_match_idx + 1, len(temp_msgs)):
-                        if temp_msgs[j]["role"] == "assistant":
-                            content_lower = temp_msgs[j]["content"].lower()
-                            # 验证这是一条图片生成相关的回复
-                            if any(kw.lower() in content_lower for kw in IMAGE_KEYWORDS):
-                                # 检查这个位置是否已经分配了图片
-                                if j not in used_images or best_score > 0.5:
-                                    temp_msgs[j]["images"].append(img)
-                                    used_images.add(j)
-                                    break
-                            # 即使没有关键词，如果匹配分数很高，也附加
-                            elif best_score > 0.5:
-                                temp_msgs[j]["images"].append(img)
-                                used_images.add(j)
-                                break
-            
-            # 第三遍：处理未匹配的图片（按顺序附加到有关键词的 Assistant 消息）
-            unmatched_img_indices = [i for i in range(len(db_images)) if i not in {
-                db_images.index(img) for m in temp_msgs for img in m["images"]
-            }]
-            
-            if unmatched_img_indices:
-                for temp_idx, m in enumerate(temp_msgs):
-                    if m["role"] == "assistant" and not m["images"]:
-                        content_lower = m["content"].lower()
-                        if any(kw.lower() in content_lower for kw in IMAGE_KEYWORDS):
-                            if unmatched_img_indices:
-                                img_idx = unmatched_img_indices.pop(0)
-                                m["images"].append(db_images[img_idx])
-                
-                # 剩余的未匹配图片挂在最后一条 Assistant 消息
-                while unmatched_img_indices:
-                    img_idx = unmatched_img_indices.pop(0)
+            # 如果还有剩余图片，附加到最后一条 Assistant 消息
+            # （可能是成功标志被截断或变体）
+            while img_cursor < len(db_images):
+                # 找最后一条包含"图片"关键词的 Assistant 消息
+                for msg in reversed(temp_msgs):
+                    if msg["role"] == "assistant" and "图片" in msg["content"]:
+                        msg["images"].append(db_images[img_cursor])
+                        img_cursor += 1
+                        break
+                else:
+                    # 实在找不到，挂在最后一条
                     if temp_msgs and temp_msgs[-1]["role"] == "assistant":
-                        temp_msgs[-1]["images"].append(db_images[img_idx])
+                        temp_msgs[-1]["images"].append(db_images[img_cursor])
                     else:
                         temp_msgs.append({
                             "role": "assistant",
                             "content": "🖼️ 生成的图片",
-                            "images": [db_images[img_idx]]
+                            "images": [db_images[img_cursor]]
                         })
+                    img_cursor += 1
             
             restored_msgs = temp_msgs
             st.session_state["messages"] = restored_msgs

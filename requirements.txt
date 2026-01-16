@@ -7,6 +7,7 @@
 streamlit
 # Cookie 管理 (实现登录保持)
 streamlit-cookies-controller
+extra-streamlit-components
 
 # LangChain 核心 (会自动安装 langchain-core)
 langgraph
