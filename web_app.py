@@ -28,8 +28,8 @@ except Exception as e:
 # 1. Session State & Cookie 管理
 # ==========================================
 # 使用 extra_streamlit_components 的 CookieManager
-# 注意：CookieManager 是一个 widget，不能用 cache_resource 缓存
-cookie_manager = stx.CookieManager()
+# 注意：CookieManager 是一个 widget，需要唯一的 key
+cookie_manager = stx.CookieManager(key="main_cookie_manager")
 
 # ==========================================
 # Cookie 读取与登录状态恢复
