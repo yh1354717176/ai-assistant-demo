@@ -5,6 +5,8 @@
 
 # Web 框架
 streamlit
+# Cookie 管理 (实现登录保持)
+streamlit-cookies-controller
 
 # LangChain 核心 (会自动安装 langchain-core)
 langgraph

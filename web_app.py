@@ -2,6 +2,7 @@ import streamlit as st
 import base64
 import datetime
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from streamlit_cookies_controller import CookieController
 
 # 导入自定义模块
 import config
@@ -23,12 +24,26 @@ except Exception as e:
     print(f"DB Init Warning: {e}")
 
 # ==========================================
-# 1. Session State 管理
+# 1. Session State & Cookie 管理
 # ==========================================
+# 初始化 Cookie 控制器
+controller = CookieController()
+
+# 尝试从 Cookies 恢复登录状态
+cookies = controller.getAll()
+
 # 用户登录状态
 if "user_id" not in st.session_state:
-    st.session_state["user_id"] = None
-    st.session_state["username"] = None
+    # 检查 Cookie 是否有 user_id
+    cookie_user_id = cookies.get("user_id")
+    cookie_username = cookies.get("username")
+    
+    if cookie_user_id and cookie_username:
+        st.session_state["user_id"] = int(cookie_user_id)
+        st.session_state["username"] = cookie_username
+    else:
+        st.session_state["user_id"] = None
+        st.session_state["username"] = None
 
 # 当前对话 Thread ID
 query_params = st.query_params
@@ -76,7 +91,11 @@ def login_page():
                     if uid:
                         st.session_state["user_id"] = uid
                         st.session_state["username"] = username
+                        # 设置 Cookie (有效期 7 天)
+                        controller.set("user_id", str(uid), max_age=604800)
+                        controller.set("username", username, max_age=604800)
                         st.success(f"{msg}，正在跳转...")
+                        # 强制刷新以应用 Cookie
                         st.rerun()
                     else:
                         st.error(msg)
@@ -109,6 +128,9 @@ def show_chat_interface():
             st.session_state["username"] = None
             st.session_state["thread_id"] = None
             st.session_state["messages"] = []
+            # 清除 Cookies
+            controller.remove("user_id")
+            controller.remove("username")
             st.rerun()
         
         st.divider()
@@ -221,42 +243,8 @@ def show_chat_interface():
                 texts = [p if isinstance(p, str) else p.get("text", "") for p in ai_text]
                 ai_text = "\n".join(texts)
             
-            # 检查是否有新生成的图片 (从 DB 查，或者从内存 Fallback)
-            # 策略：不管怎样，我们去 app_images 查一下该 thread 最近生成的图片
-            # 为了避免把历史图片全查出来，我们可以基于 created_at 查最近几秒的？
-            # 或者更简单：Agent 工具在返回 ToolMessage 时，虽然没有返回图片数据，
-            # 但我们在 render loop 里可以用 auth_service.get_images_for_thread(tid)
-            # 然后把它们挂载到当前最新的这条消息上？
-            # 这里的逻辑稍微有点 trick：
-            # 如果我们每次都全量查图片然后全量 render，就不用把图片挂在 message 对象上了。
-            # 但那样排版会乱（所有图片堆在一起）。
-            # 更好的做法：工具生成图片后，image_store 依然保留了一份（为了实时显示），
-            # 同时 DB 里也存了一份（为了持久化）。
-            
             # 从内存 store 拿（保证实时性）
             current_generated_imgs = image_store.get_and_clear()
-            
-            # 如果内存空了（因为存 DB 去了），我们尝试从 DB 捞最近的一张？ 
-            # 之前的 tools.py 修改里，如果存 DB 成功，image_store 是没有数据的。
-            # 所以我们需要去 DB 捞。
-            # 这里简单起见：每次回复如果 tools.py 说是"生成图片成功"，我们就去 DB 拿最新的 n 张图。
-            # 或者 tools.py 存 DB 后，同时也存 image_store 一份专门用于 "Current Turn Display"？
-            # 让我们修改 tools.py 比较麻烦，不如在这里查 DB。
-            
-            new_images = []
-            if "图片已成功生成" in str(ai_text) or "图片已生成" in str(ai_text):
-                # 查 DB 所有图片，然后过滤？或者只查最后一张？
-                # 这是一个弊端，我们不知道哪张是刚生成的。
-                # 改进方案：auth_service.save_image_to_db 返回 image_id，
-                # 但 tool output 只是 string。
-                # **最终方案**：tools.py 里，除了存 DB，也 `store.add()` 一份用于当次即时回显。
-                # 请务必执行下面的 run_command 来再次给 tools.py 打补丁，加上 store.add。
-                pass
-            
-            # 为了稳妥，我们暂时还是依靠 image_store 做当次显示，
-            # 只有在 reload/restore 时才从 DB 读。
-            # 所以 tools.py 需要更新：既存 DB，也存 Memory Store。
-            
             if current_generated_imgs:
                 new_images = current_generated_imgs
 
