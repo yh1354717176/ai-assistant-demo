@@ -33,6 +33,7 @@ cookie_manager = stx.CookieManager(key="main_cookie_manager")
 
 # ==========================================
 # Cookie 读取与登录状态恢复
+# 注意：CookieManager 首次加载时可能返回空，需要重试
 # ==========================================
 
 # 初始化用户状态变量
@@ -40,15 +41,21 @@ if "user_id" not in st.session_state:
     st.session_state["user_id"] = None
     st.session_state["username"] = None
 
+# Cookie 重试计数器（每次刷新后会被重置为 0）
+if "_cookie_retry" not in st.session_state:
+    st.session_state["_cookie_retry"] = 0
+
 # 尝试从 Cookie 恢复登录状态
 if st.session_state["user_id"] is None:
+    retry_count = st.session_state["_cookie_retry"]
+    
     try:
-        # extra_streamlit_components 的 get_all() 返回字典
+        # 获取所有 Cookie
         cookies = cookie_manager.get_all()
-        print(f"🍪 Cookie 读取: {type(cookies)} - {cookies}")
+        print(f"🍪 Cookie 读取 (尝试 {retry_count}): {cookies}")
         
-        # 如果有有效的 cookies 数据，立即恢复
-        if cookies and isinstance(cookies, dict):
+        # 检查是否有有效数据
+        if cookies and isinstance(cookies, dict) and len(cookies) > 0:
             cookie_user_id = cookies.get("user_id")
             cookie_username = cookies.get("username")
             
@@ -59,6 +66,18 @@ if st.session_state["user_id"] is None:
                     print(f"✅ 从 Cookie 恢复登录状态: {cookie_username}")
                 except (ValueError, TypeError) as e:
                     print(f"⚠️ Cookie 值无效: {e}")
+        else:
+            # Cookie 还没准备好
+            MAX_RETRIES = 3
+            if retry_count < MAX_RETRIES:
+                st.session_state["_cookie_retry"] = retry_count + 1
+                wait_time = 0.3 * (retry_count + 1)  # 0.3s, 0.6s, 0.9s
+                print(f"⏳ Cookie 未就绪，等待 {wait_time}s 后重试 ({retry_count + 1}/{MAX_RETRIES})...")
+                import time
+                time.sleep(wait_time)
+                st.rerun()
+            else:
+                print("⚠️ Cookie 读取超时，显示登录页面")
                     
     except Exception as e:
         print(f"⚠️ Cookie 读取异常: {e}")
@@ -111,12 +130,14 @@ def login_page():
                         st.session_state["user_id"] = uid
                         st.session_state["username"] = username
                         # 设置 Cookie (有效期 7 天)
-                        import datetime
-                        expires = datetime.datetime.now() + datetime.timedelta(days=7)
+                        import datetime as dt
+                        expires = dt.datetime.now() + dt.timedelta(days=7)
                         cookie_manager.set("user_id", str(uid), expires_at=expires)
                         cookie_manager.set("username", username, expires_at=expires)
                         st.success(f"{msg}，正在跳转...")
-                        # 强制刷新以应用 Cookie
+                        # 等待 Cookie 写入后再刷新
+                        import time
+                        time.sleep(0.5)
                         st.rerun()
                     else:
                         st.error(msg)
