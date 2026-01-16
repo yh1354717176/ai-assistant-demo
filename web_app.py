@@ -67,9 +67,31 @@ st.set_page_config(page_title="幻影科技 AI 助手", page_icon="🤖")
 st.title("🤖 幻影科技员工助手 (Agent版 v5.0)")
 st.caption("我是由 LangGraph 驱动的智能体，能查文档，也能算工资。")
 
-# 🖼️ 模块级全局变量存储生成的图片（解决线程隔离问题）
-# 工具在后台线程执行时无法访问 st.session_state，所以用全局变量
-GENERATED_IMAGES = []
+# 🖼️ 图片存储（解决线程隔离与 Streamlit Rerun 状态丢失问题）
+# 使用 @st.cache_resource 确保对象在不同 Rerun 间保持同一个实例
+@st.cache_resource
+class ImageStore:
+    def __init__(self):
+        self.images = []
+        import threading
+        self.lock = threading.Lock()
+    
+    def add(self, img_data):
+        with self.lock:
+            self.images.append(img_data)
+            
+    def get_and_clear(self):
+        with self.lock:
+            imgs = list(self.images)
+            self.images.clear()
+            return imgs
+
+@st.cache_resource
+def get_image_store():
+    return ImageStore()
+
+# 初始化全局图片存储
+image_store = get_image_store()
 
 
 # ==========================================
@@ -120,7 +142,7 @@ def get_graph(_version="v5.8"):  # 修改版本号强制刷新缓存
     def generate_illustration(prompt: str) -> str:
         """当你需要根据用户的描述生成图片、绘画、或者设计草图时，使用这个工具。
         输入应该是对画面内容的详细英文或中文描述。调用 Nano Banana (Gemini 2.5 Flash Image) API。"""
-        global GENERATED_IMAGES  # 🔑 必须在函数开头声明
+        # global GENERATED_IMAGES  # 不再需要 global 声明
         try:
             # 延迟导入
             from google import genai
@@ -151,15 +173,18 @@ def get_graph(_version="v5.8"):  # 修改版本号强制刷新缓存
                         mime_type = part.inline_data.mime_type or 'image/png'
                         b64_data = base64.b64encode(img_data).decode('utf-8')
                         
-                        # 存储图片到全局变量
-                        GENERATED_IMAGES.append({
+                        # 存储图片到全局存储
+                        # 注意：这里我们使用闭包中的 image_store (由 get_graph 外部定义)
+                        # 或者重新获取单例
+                        store = get_image_store()
+                        store.add({
                             'data': b64_data,
                             'mime_type': mime_type,
                             'prompt': prompt[:50]
                         })
                         
                         # 🔍 调试：打印确认信息
-                        print(f"✅ 图片已存储到全局变量，当前共 {len(GENERATED_IMAGES)} 张图片")
+                        print(f"✅ 图片已存储到全局 ImageStore")
                         
                         # 只返回简短消息给 LLM，避免 token 溢出
                         return f"✅ 图片已成功生成！（提示词：{prompt[:30]}...）图片将自动显示在对话中。"
@@ -301,7 +326,17 @@ for msg in st.session_state["messages"]:
     if msg["role"] == "user":
         st.chat_message("user").write(msg["content"])
     else:
-        st.chat_message("assistant").write(msg["content"])
+        with st.chat_message("assistant"):
+            st.write(msg["content"])
+            # 如果消息包含图片，显示图片
+            if "images" in msg and msg["images"]:
+                for img in msg["images"]:
+                    import base64
+                    try:
+                        image_data = base64.b64decode(img['data'])
+                        st.image(image_data, caption=f"🎨 {img.get('prompt', '生成的图片')}...", use_container_width=True)
+                    except Exception as e:
+                        st.error(f"图片加载失败: {e}")
 
 # 处理用户输入
 if user_input := st.chat_input("请输入问题（例如：公司吉祥物叫什么？）"):
@@ -429,23 +464,27 @@ if user_input := st.chat_input("请输入问题（例如：公司吉祥物叫什
         st.markdown(ai_content)
         
         # 🖼️ 显示生成的图片（如果有的话）
-        # 使用全局变量而非 session_state（解决线程隔离问题）
-        print(f"🔍 检查图片: 全局变量中有 {len(GENERATED_IMAGES)} 张图片")
+        # 从全局 ImageStore 获取并清空
+        generated_imgs = image_store.get_and_clear()
+        print(f"🔍 检查图片: ImageStore 中有 {len(generated_imgs)} 张图片")
         
-        if GENERATED_IMAGES:
+        if generated_imgs:
             st.divider()
             st.caption("🎨 生成的图片：")
-            for img in GENERATED_IMAGES:
+            for img in generated_imgs:
                 import base64
                 try:
                     image_data = base64.b64decode(img['data'])
                     st.image(image_data, caption=f"{img['prompt']}...", use_container_width=True)
                 except Exception as img_e:
                     st.error(f"图片显示失败: {img_e}")
-            # 清空已显示的图片，避免重复显示（使用 clear() 而非赋值，避免 global 问题）
-            GENERATED_IMAGES.clear()
-
-    st.session_state["messages"].append({"role": "assistant", "content": ai_content})
+                    
+    # 保存消息到历史记录（包括图片数据）
+    st.session_state["messages"].append({
+        "role": "assistant", 
+        "content": ai_content,
+        "images": generated_imgs if generated_imgs else []
+    })
 
 # ==========================================
 # 5. 侧边栏 - 图片上传 & 工具调用历史
