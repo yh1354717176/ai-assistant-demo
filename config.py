@@ -47,5 +47,17 @@ def init_environment():
     except Exception as e:
         print(f"Environment setup warning: {e}")
 
-# 数据库连接串 (优先从 Secrets 获取)
-DB_URI = st.secrets.get("DB_URI", os.getenv("DB_URI"))
+# 数据库连接串 (优先从 Secrets 获取，兼容本地 .env)
+def get_db_uri():
+    """安全获取数据库连接串"""
+    # 优先从 st.secrets 获取
+    try:
+        if "DB_URI" in st.secrets:
+            return st.secrets["DB_URI"]
+    except Exception:
+        pass
+    
+    # 回退到环境变量
+    return os.getenv("DB_URI")
+
+DB_URI = get_db_uri()
