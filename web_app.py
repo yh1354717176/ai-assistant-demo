@@ -67,12 +67,16 @@ st.set_page_config(page_title="幻影科技 AI 助手", page_icon="🤖")
 st.title("🤖 幻影科技员工助手 (Agent版 v5.0)")
 st.caption("我是由 LangGraph 驱动的智能体，能查文档，也能算工资。")
 
+# 🖼️ 模块级全局变量存储生成的图片（解决线程隔离问题）
+# 工具在后台线程执行时无法访问 st.session_state，所以用全局变量
+GENERATED_IMAGES = []
+
 
 # ==========================================
 # 2. 缓存资源 (避免每次刷新都重连数据库)
 # ==========================================
 @st.cache_resource
-def get_graph(_version="v5.6"):  # 修改版本号强制刷新缓存
+def get_graph(_version="v5.7"):  # 修改版本号强制刷新缓存
     """初始化图结构，只执行一次"""
     print(f"🔄 正在初始化 LangGraph... (Cache Version: {_version})")
 
@@ -146,17 +150,16 @@ def get_graph(_version="v5.6"):  # 修改版本号强制刷新缓存
                         mime_type = part.inline_data.mime_type or 'image/png'
                         b64_data = base64.b64encode(img_data).decode('utf-8')
                         
-                        # 🔑 关键：将图片存储到 session_state，而不是返回给 LLM
-                        if "generated_images" not in st.session_state:
-                            st.session_state["generated_images"] = []
-                        st.session_state["generated_images"].append({
+                        # 🔑 关键：使用全局变量存储图片（解决线程隔离问题）
+                        global GENERATED_IMAGES
+                        GENERATED_IMAGES.append({
                             'data': b64_data,
                             'mime_type': mime_type,
                             'prompt': prompt[:50]
                         })
                         
                         # 🔍 调试：打印确认信息
-                        print(f"✅ 图片已存储到 session_state，当前共 {len(st.session_state['generated_images'])} 张图片")
+                        print(f"✅ 图片已存储到全局变量，当前共 {len(GENERATED_IMAGES)} 张图片")
                         
                         # 只返回简短消息给 LLM，避免 token 溢出
                         return f"✅ 图片已成功生成！（提示词：{prompt[:30]}...）图片将自动显示在对话中。"
@@ -426,15 +429,14 @@ if user_input := st.chat_input("请输入问题（例如：公司吉祥物叫什
         st.markdown(ai_content)
         
         # 🖼️ 显示生成的图片（如果有的话）
-        # 🔍 调试：检查 session_state 中的图片
-        print(f"🔍 检查图片: 'generated_images' in session_state = {'generated_images' in st.session_state}")
-        if "generated_images" in st.session_state:
-            print(f"🔍 图片数量: {len(st.session_state['generated_images'])}")
+        # 使用全局变量而非 session_state（解决线程隔离问题）
+        global GENERATED_IMAGES
+        print(f"🔍 检查图片: 全局变量中有 {len(GENERATED_IMAGES)} 张图片")
         
-        if "generated_images" in st.session_state and st.session_state["generated_images"]:
+        if GENERATED_IMAGES:
             st.divider()
             st.caption("🎨 生成的图片：")
-            for img in st.session_state["generated_images"]:
+            for img in GENERATED_IMAGES:
                 import base64
                 try:
                     image_data = base64.b64decode(img['data'])
@@ -442,7 +444,7 @@ if user_input := st.chat_input("请输入问题（例如：公司吉祥物叫什
                 except Exception as img_e:
                     st.error(f"图片显示失败: {img_e}")
             # 清空已显示的图片，避免重复显示
-            st.session_state["generated_images"] = []
+            GENERATED_IMAGES = []
 
     st.session_state["messages"].append({"role": "assistant", "content": ai_content})
 
