@@ -430,7 +430,6 @@ if user_input := st.chat_input("请输入问题（例如：公司吉祥物叫什
         
         # 🖼️ 显示生成的图片（如果有的话）
         # 使用全局变量而非 session_state（解决线程隔离问题）
-        global GENERATED_IMAGES
         print(f"🔍 检查图片: 全局变量中有 {len(GENERATED_IMAGES)} 张图片")
         
         if GENERATED_IMAGES:
@@ -443,8 +442,8 @@ if user_input := st.chat_input("请输入问题（例如：公司吉祥物叫什
                     st.image(image_data, caption=f"{img['prompt']}...", use_container_width=True)
                 except Exception as img_e:
                     st.error(f"图片显示失败: {img_e}")
-            # 清空已显示的图片，避免重复显示
-            GENERATED_IMAGES = []
+            # 清空已显示的图片，避免重复显示（使用 clear() 而非赋值，避免 global 问题）
+            GENERATED_IMAGES.clear()
 
     st.session_state["messages"].append({"role": "assistant", "content": ai_content})
 
