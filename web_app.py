@@ -128,15 +128,15 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
 
             client = genai.Client(api_key=api_key)
             
-            # Gemini 2.5 Flash Image 使用 generate_content 而不是 generate_images
-            # 需要配置响应模态为 IMAGE
+            # Gemini 2.0 Flash Exp 图片生成
+            # 需要配置响应模态为 Text 和 Image（注意大小写！）
             try:
                 # 使用用户账户中可用的模型 ID
                 response = client.models.generate_content(
-                    model='gemini-2.0-flash-exp-image-generation',  # 正确的模型ID，不是 preview 而是 exp
+                    model='gemini-2.0-flash-exp-image-generation',
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        response_modalities=['IMAGE']
+                        response_modalities=['Text', 'Image']  # 修正：需要同时包含 Text 和 Image
                     )
                 )
                 
@@ -148,28 +148,43 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
                         b64_data = base64.b64encode(img_data).decode('utf-8')
                         return f"\n![Nano Banana 插图](data:{mime_type};base64,{b64_data})\n"
                 
+                # 如果没有图片，返回文本响应
+                text_parts = [p.text for p in response.candidates[0].content.parts if hasattr(p, 'text') and p.text]
+                if text_parts:
+                    return f"⚠️ 模型返回了文字而非图片：\n{''.join(text_parts)}"
+                
                 return "❌ 生成成功但未返回图片数据。"
                 
             except Exception as gemini_e:
-                # 如果 Gemini 失败，尝试 Imagen 4.0 作为后备（用户账户中可用的版本）
-                try:
-                    response = client.models.generate_images(
-                        model='imagen-4.0-generate-001',  # 更新为用户账户中可用的 Imagen 4.0
-                        prompt=prompt,
-                        config=types.GenerateImagesConfig(
-                            number_of_images=1,
-                        )
-                    )
-                    
-                    if response.generated_images:
-                        img_data = response.generated_images[0].image.image_bytes
-                        b64_data = base64.b64encode(img_data).decode('utf-8')
-                        return f"\n![Imagen 插图](data:image/png;base64,{b64_data})\n"
-                        
-                except Exception as imagen_e:
-                    return f"❌ Gemini 图片生成失败: {gemini_e}\n\nImagen 后备也失败: {imagen_e}"
+                error_msg = str(gemini_e)
                 
-                return f"❌ 图片生成失败: {gemini_e}"
+                # 检测是否是计费问题
+                if "billed" in error_msg.lower() or "billing" in error_msg.lower():
+                    return "❌ **需要启用 Google Cloud 计费**\n\n您的 API 账户目前是免费层级。Gemini/Imagen 图片生成功能需要在 Google AI Studio 或 Google Cloud 中启用计费。\n\n请访问 https://aistudio.google.com 检查您的账户设置。"
+                
+                # 如果是模态不支持，尝试不同的配置
+                if "modalities" in error_msg.lower():
+                    try:
+                        # 尝试只用 image 小写
+                        response = client.models.generate_content(
+                            model='gemini-2.0-flash-exp-image-generation',
+                            contents=f"Generate an image: {prompt}",
+                            config=types.GenerateContentConfig(
+                                response_modalities=['image']
+                            )
+                        )
+                        
+                        for part in response.candidates[0].content.parts:
+                            if part.inline_data is not None:
+                                img_data = part.inline_data.data
+                                mime_type = part.inline_data.mime_type or 'image/png'
+                                b64_data = base64.b64encode(img_data).decode('utf-8')
+                                return f"\n![Nano Banana 插图](data:{mime_type};base64,{b64_data})\n"
+                                
+                    except Exception as retry_e:
+                        pass
+                
+                return f"❌ 图片生成失败: {gemini_e}\n\n💡 提示：图片生成功能可能需要您的 Google API 账户启用计费。请访问 https://aistudio.google.com 检查账户设置。"
                 
         except Exception as e:
             return f"❌ 生成图片出错: {str(e)}"
