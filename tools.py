@@ -19,9 +19,9 @@ def calculate_bonus(salary: int) -> str:
     return f"【系统计算】根据您的工资，年终奖应为 {bonus} 元。"
 
 @tool
-def generate_illustration(prompt: str) -> str:
+def generate_illustration(prompt: str, config: RunnableConfig) -> str:
     """当你需要根据用户的描述生成图片、绘画、或者设计草图时，使用这个工具。
-    输入应该是对画面内容的详细英文或中文描述。调用 Nano Banana (Gemini 2.5 Flash Image) API。"""
+    输入应该是对画面内容的详细英文或中文描述。"""
     try:
         # 延迟导入
         from google import genai
@@ -35,7 +35,6 @@ def generate_illustration(prompt: str) -> str:
 
         client = genai.Client(api_key=api_key)
         
-        # Gemini 2.5 Flash Image 图片生成
         try:
             response = client.models.generate_content(
                 model='gemini-2.5-flash-image',
@@ -52,13 +51,15 @@ def generate_illustration(prompt: str) -> str:
                     mime_type = part.inline_data.mime_type or 'image/png'
                     b64_data = base64.b64encode(img_data).decode('utf-8')
                     
-                    # 存储图片到数据库
-                    # 注意：工具执行时如果在 Streamlit 的 ScriptRunner 线程中，可以访问 session_state
-                    # 如果不能，需要通过 config 传递 thread_id。
-                    # 这里假设我们在 Streamlit 环境下同步执行。
+                    # 优先从 Config 获取 context (Cross-thread safe)
+                    thread_id = config.get("configurable", {}).get("thread_id")
+                    
+                    # Fallback to session_state if config is empty (Main thread dev mode)
+                    if not thread_id and "thread_id" in st.session_state:
+                        thread_id = st.session_state["thread_id"]
+
                     try:
                         import auth_service
-                        thread_id = st.session_state.get("thread_id")
                         if thread_id:
                             auth_service.save_image_to_db(thread_id, prompt, b64_data, mime_type)
                             print(f"✅ 图片已存储到数据库 app_images (Thread: {thread_id})")
