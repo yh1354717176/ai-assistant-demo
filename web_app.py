@@ -240,6 +240,13 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
         # 确保系统提示词在消息列表最前面
         if not messages or not isinstance(messages[0], SystemMessage):
             messages = [SystemMessage(content=SYSTEM_PROMPT)] + list(messages)
+        
+        # 🛡️ 防止历史消息过长导致 token 溢出
+        # 保留系统提示词 + 最近 50 条消息
+        MAX_HISTORY = 50
+        if len(messages) > MAX_HISTORY + 1:  # +1 是系统提示词
+            messages = [messages[0]] + list(messages[-(MAX_HISTORY):])
+        
         return {"messages": [llm_with_tools.invoke(messages)]}
 
     graph_builder = StateGraph(State)
