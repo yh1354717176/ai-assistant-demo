@@ -38,7 +38,7 @@ def generate_illustration(prompt: str, config: RunnableConfig) -> str:
         
         try:
             response = client.models.generate_content(
-                model='imagen-3.0-generate-001',
+                model='gemini-2.0-flash-exp',
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_modalities=['Text', 'Image']
