@@ -131,7 +131,7 @@ def get_graph(_version="v5.2"):  # 修改版本号强制刷新缓存
             # 使用 Imagen 3.0 生成高质量图像
             try:
                 response = client.models.generate_images(
-                    model='imagen-3.0-generate-001',
+                    model='gemini-2.5-flash-image',
                     prompt=prompt,
                     config=types.GenerateImagesConfig(
                         number_of_images=1,
