@@ -28,40 +28,56 @@ except Exception as e:
 # 1. Session State & Cookie 管理
 # ==========================================
 # 初始化 Cookie 控制器
+# 注意：不要缓存 CookieController，每次都新建以确保获取最新 Cookie
 controller = CookieController()
 
 # ==========================================
 # Cookie 读取与登录状态恢复
-# 注意：streamlit_cookies_controller 的 getAll() 在首次加载时可能为空
-# 需要处理异步读取的情况
+# 
+# 问题：streamlit_cookies_controller 在首次加载时 getAll() 可能返回 None/{}
+# 解决：使用 st.cache_data 缓存读取结果，或使用计数器限制 rerun 次数
 # ==========================================
-def get_cookie_value(key, default=None):
-    """安全获取 Cookie 值，处理 None 和空字典情况"""
-    try:
-        cookies = controller.getAll()
-        if cookies and isinstance(cookies, dict):
-            return cookies.get(key, default)
-        return default
-    except Exception:
-        return default
 
-# 用户登录状态初始化
+# 初始化用户状态变量
 if "user_id" not in st.session_state:
     st.session_state["user_id"] = None
     st.session_state["username"] = None
 
-# 每次运行时尝试从 Cookie 恢复（处理首次加载 Cookie 未就绪的情况）
+# 初始化 Cookie 尝试计数器（防止无限 rerun）
+if "_cookie_retry_count" not in st.session_state:
+    st.session_state["_cookie_retry_count"] = 0
+
+# 尝试从 Cookie 恢复登录状态
 if st.session_state["user_id"] is None:
-    cookie_user_id = get_cookie_value("user_id")
-    cookie_username = get_cookie_value("username")
-    
-    if cookie_user_id and cookie_username:
-        try:
-            st.session_state["user_id"] = int(cookie_user_id)
-            st.session_state["username"] = cookie_username
-        except (ValueError, TypeError):
-            # Cookie 值无效，保持登出状态
-            pass
+    try:
+        cookies = controller.getAll()
+        
+        # 调试输出
+        retry_count = st.session_state["_cookie_retry_count"]
+        print(f"🍪 Cookie 读取 (尝试 {retry_count}): {cookies}")
+        
+        # 如果有有效的 cookies 数据，立即恢复
+        if cookies and isinstance(cookies, dict):
+            cookie_user_id = cookies.get("user_id")
+            cookie_username = cookies.get("username")
+            
+            if cookie_user_id and cookie_username:
+                try:
+                    st.session_state["user_id"] = int(cookie_user_id)
+                    st.session_state["username"] = cookie_username
+                    print(f"✅ 从 Cookie 恢复登录状态: {cookie_username}")
+                except (ValueError, TypeError) as e:
+                    print(f"⚠️ Cookie 值无效: {e}")
+        else:
+            # Cookie 还没准备好，最多尝试 2 次 rerun
+            if st.session_state["_cookie_retry_count"] < 2:
+                st.session_state["_cookie_retry_count"] += 1
+                import time
+                time.sleep(0.15)  # 短暂等待让 Cookie 组件加载
+                st.rerun()
+                    
+    except Exception as e:
+        print(f"⚠️ Cookie 读取异常: {e}")
 
 # 当前对话 Thread ID
 query_params = st.query_params
